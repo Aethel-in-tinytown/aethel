@@ -50,18 +50,19 @@ class TestDreamGrammar(unittest.TestCase):
             self.assertNotIn("the my ", text)
 
     def test_belief_fragments_trim_at_word_boundaries(self):
-        frag = Aethel._dream_fragment(
-            "I refuse: Deceive a reader to gain attention for myself"
-        )
-        self.assertFalse(frag.startswith("I refuse:"))
-        self.assertTrue(frag.endswith("…") or len(frag) <= 48)
-        if frag.endswith("…"):
-            body = frag[:-1]
-            self.assertEqual(body, body.rstrip())
+        short = "Deceive a reader to gain attention for myself"
+        self.assertEqual(Aethel._dream_fragment("I refuse: " + short), short)
 
-            trimmed = "Deceive a reader to gain attention for myself"
-            self.assertTrue(trimmed.startswith(body))
-            self.assertTrue(trimmed[len(body) :].startswith(" ") or trimmed == body)
+        original = short + " without earning their trust"
+        frag = Aethel._dream_fragment("I refuse: " + original)
+        self.assertFalse(frag.startswith("I refuse:"))
+        self.assertTrue(frag.endswith("…"))
+        body = frag[:-1]
+        self.assertLessEqual(len(body), 48)
+        self.assertEqual(body, body.rstrip())
+        self.assertTrue(original.startswith(body))
+        self.assertLess(len(body), len(original))
+        self.assertTrue(original[len(body) :].startswith(" "))
 
     def test_fragment_strips_verdict_prefix(self):
         self.assertEqual(

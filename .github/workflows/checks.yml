@@ -40,6 +40,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Exercise npm 10 lockfile compatibility
+        if: matrix.transport == 'polling'
+        run: npm install --global npm@10.9.4
       - run: npm ci
         working-directory: web
       - run: npm run typecheck && npm run lint && npm run format:check && npm test && npm run build

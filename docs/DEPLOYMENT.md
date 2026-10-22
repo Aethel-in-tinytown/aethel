@@ -47,6 +47,14 @@ state in the `aethel-data` volume. Ports bind to host loopback. `docker compose 
 retains the volume; do not delete it when upgrading. Pass `--offline` as the service
 command for a local installation without public reading sources.
 
+The image listens on `0.0.0.0` inside the container. Keep published ports bound to
+host loopback, as Compose does; for a standalone container use
+`-p 127.0.0.1:8080:8080 -p 127.0.0.1:8081:8081`. A bare `-p 8080:8080` exposes the
+service on every host interface. Snapshots, the public journal, and outgoing letters
+are readable without authentication; the owner token protects care commands only.
+Expose them through a reverse proxy only when public spectator access is intended,
+or enforce viewer authentication at the proxy for a private installation.
+
 ## HTTPS reverse proxy
 
 Expose a single HTTPS origin and set `AETHEL_PUBLIC_ORIGIN=https://town.example.com`.

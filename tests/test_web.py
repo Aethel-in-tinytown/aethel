@@ -159,9 +159,10 @@ class TestGateway(unittest.TestCase):
             self.gateway.rate_limit("same-peer")
 
     def test_fallback_and_explicit_engine_errors(self):
-        with patch(
-            "aethel_web.transports.importlib.import_module", side_effect=ImportError
-        ):
+        # Replace the adapter's module reference, leaving stdlib importlib intact
+        # for unittest.mock's own resolution of subsequent patch targets.
+        with patch("aethel_web.transports.importlib") as imports:
+            imports.import_module.side_effect = ImportError
             self.assertEqual(
                 select_engine("auto", [("fast", "not-installed"), ("stdlib", None)])[0],
                 "stdlib",
@@ -170,12 +171,13 @@ class TestGateway(unittest.TestCase):
                 select_engine("fast", [("fast", "not-installed")])
         fake = type("Module", (), {"FastHttp": type("FastHttp", (), {})})
         with (
-            patch("aethel_web.transports.importlib.import_module", return_value=fake),
+            patch("aethel_web.transports.importlib") as imports,
             patch(
                 "aethel_web.transports.asgi_http",
                 return_value=(lambda: None, lambda: None),
             ),
         ):
+            imports.import_module.return_value = fake
             run, shutdown = make_http(self.gateway, None, "127.0.0.1", 0, "auto")
             self.assertEqual(self.gateway.http_engine, "uvicorn")
 

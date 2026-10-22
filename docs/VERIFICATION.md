@@ -72,3 +72,21 @@ restart continuity, and keep clients connected through both websocket engines
 while shutting down. The supervisor owns Ctrl+C, signal handlers do not acquire
 multiprocessing locks, pending requests are released, and the snapshot reader
 continues draining until the worker has exited.
+
+## PR review follow-up
+
+Reproduced the clean-install failure with npm 10.9.4: Vite's optional esbuild peer
+was absent from the lockfile. Regenerated the lockfile with that npm version,
+adding the nested esbuild 0.28.2 packages without changing existing dependency
+versions. Full `npm ci` installs now pass with npm 10.9.4 and 11.12.1; the polling
+CI job uses npm 10 so this compatibility remains checked.
+
+Transport tests now replace the adapter's `importlib` reference instead of
+mutating stdlib `importlib.import_module`, which mock also uses to resolve patch
+targets. The full suite on local Python 3.10 passes with optional transports
+(164 passed) and in a clean standard-library environment (163 passed, one optional
+streaming test skipped). Python 3.12/3.14 remain covered by the configured CI
+matrix; those interpreters were not run locally. The dream-fragment test now
+requires actual truncation of a long fixture at a word boundary and separately
+checks that short text remains intact. Container instructions explicitly describe
+the unauthenticated read surface and loopback port bindings.
