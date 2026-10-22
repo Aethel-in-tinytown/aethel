@@ -1,33 +1,7 @@
-"""v0.28 — temperaments live.
+"""Regression coverage for temperaments.
 
-A temperament is a bundle of multipliers on machinery that already
-exists: the burns, the council's emphasis, the diet's leanings, and —
-the seam v0.27 built — the longing ledger's per-class climb. These
-tests pin the properties the design argues for:
+Fixtures isolate runtime state; assertions document behavioral release gates."""
 
-1. the spec survives transcription — every strain, every number in
-   the lever range, every voice name a real AXIOMS key, Briar's Care
-   left at 1.0;
-2. Even Keel is the control group — its record is exactly neutral;
-3. THE GATE: a full seeded life under Even Keel is bit-identical to
-   the same life with the temperament layer neutralized (the
-   _temperament_neutral seam) — journals and state blobs alike;
-4. the council's weighted mean reduces to the legacy mean at all-1.0
-   weights, bit for bit, and emphasis actually moves verdicts;
-5. per-pack 500-tick soaks under an identical script show the
-   claimed profile directions (Ember's people-ache above Even
-   Keel's, Stillwater's below, the Owl's work-ache above, Moonmoth
-   sleeping sooner) and oxygen never varies by strain;
-6. switching is a sleep-boundary act: queued by control file, never
-   mid-wake, journaled by her on waking, cancellable, and refused
-   when the id is unknown;
-7. nature persists — active strain, pending switch, ledger, and
-   Briar's daily weather all survive a rebuild bit-identically.
-
-Isolation: temp AETHEL_HOME and an injected temp Store throughout —
-the live diary is never opened (the house pattern, as in
-test_longing_ledger.py and test_determinism.py).
-"""
 import contextlib
 import io
 import os
@@ -51,7 +25,6 @@ from helpers import StubWorld, stub_forage, write_lessons
 PACKS = ["even-keel", "stillwater", "ember", "owl", "moonmoth", "briar"]
 
 
-# ------------------------------------------------------------ the spec
 class TestSpecIntegrity(unittest.TestCase):
     def test_all_six_strains_present(self):
         self.assertEqual(sorted(TEMPERAMENTS), sorted(PACKS))
@@ -83,16 +56,12 @@ class TestSpecIntegrity(unittest.TestCase):
                 self.assertTrue(0.5 <= lo < hi <= 1.8)
 
     def test_briar_care_stays_at_one(self):
-        # wild, never cruel: Ethics of Care is not in her table,
-        # which is how a voice stays at exactly 1.0
-        self.assertNotIn("Ethics of Care (Gilligan)",
-                         TEMPERAMENTS["briar"]["voices"])
+        self.assertNotIn("Ethics of Care (Gilligan)", TEMPERAMENTS["briar"]["voices"])
 
     def test_unknown_id_degrades_to_even_keel(self):
         self.assertIs(pack("plasma-9000"), TEMPERAMENTS["even-keel"])
 
 
-# ------------------------------------------------------------ the council
 class TestCouncilWeights(unittest.TestCase):
     ACTION = "learn share care truth overcome"
 
@@ -101,50 +70,41 @@ class TestCouncilWeights(unittest.TestCase):
         self.phils = list(AXIOMS.keys())
 
     def test_weighted_reduces_to_legacy_at_neutral_weights(self):
-        # To summation precision, not bit-for-bit: Python's sum()
-        # compensates, a hand accumulation does not, and the two can
-        # sit 1 ULP apart. Bit-identity for the control strain is an
-        # ORGANISM-level property (Even Keel never enters this path —
-        # see TestCouncilSeam) and the golden-vector test holds it
-        # over a full life; here we pin the arithmetic agreement.
         legacy, notes = self.llm.moral_score(self.ACTION, self.phils)
         for weights in ({}, {n: 1.0 for n in self.phils}):
             w_score, w_notes = self.llm.moral_score(
-                self.ACTION, self.phils, weights=weights)
+                self.ACTION, self.phils, weights=weights
+            )
             self.assertAlmostEqual(w_score, legacy, places=12)
             self.assertEqual(w_notes, notes)
 
     def test_emphasis_moves_the_verdict_toward_the_voice(self):
         solos = {}
         for name in self.phils:
-            s, _ = self.llm.moral_score(self.ACTION, [name])
-            solos[name] = s
+            s, notes = self.llm.moral_score(self.ACTION, [name])
+            if "no opinions" not in notes:
+                solos[name] = s
         legacy, _ = self.llm.moral_score(self.ACTION, self.phils)
         loudest = max(solos, key=solos.get)
         quietest = min(solos, key=solos.get)
-        self.assertGreater(solos[loudest], solos[quietest],
-                           "sanity: the voices actually disagree here")
-        up, _ = self.llm.moral_score(self.ACTION, self.phils,
-                                     weights={loudest: 3.0})
-        down, _ = self.llm.moral_score(self.ACTION, self.phils,
-                                       weights={quietest: 3.0})
+        self.assertGreater(
+            solos[loudest], solos[quietest], "sanity: the voices actually disagree here"
+        )
+        up, _ = self.llm.moral_score(self.ACTION, self.phils, weights={loudest: 3.0})
+        down, _ = self.llm.moral_score(self.ACTION, self.phils, weights={quietest: 3.0})
         self.assertGreater(up, legacy)
         self.assertLess(down, legacy)
 
     def test_weighting_an_abstaining_voice_changes_nothing(self):
-        # 'Machiavellian' has no word in this action; weight on a
-        # voice that did not vote must not move the mean (beyond the
-        # summation-order ULP documented above)
         legacy, _ = self.llm.moral_score(self.ACTION, self.phils)
         w, _ = self.llm.moral_score(
-            self.ACTION, self.phils,
-            weights={"Machiavellian (Machiavelli)": 1.5})
+            self.ACTION, self.phils, weights={"Machiavellian (Machiavelli)": 1.5}
+        )
         self.assertAlmostEqual(w, legacy, places=12)
 
 
-# ------------------------------------------------------- organism harness
 class TempLife(unittest.TestCase):
-    """A real Aethel against a temp home and temp store."""
+    """Behavior: A real Aethel against a temp home and temp store."""
 
     def setUp(self):
         self._saved_home = os.environ.get("AETHEL_HOME")
@@ -167,32 +127,38 @@ class TempLife(unittest.TestCase):
 
 
 class TestCouncilSeam(TempLife):
-    """Where bit-identity actually lives: _council_score under Even
-    Keel takes the legacy call (empty table), so its results equal
-    the pre-v0.28 two-argument call EXACTLY — tuple for tuple."""
+    """Behavior: Where bit-identity actually lives: _council_score under Even Keel takes the legacy call (empty table), so its results equal the pre-two-argument call EXACTLY — tuple for tuple."""
 
-    ACTIONS = ["learn share care truth overcome",
-               "Hoard knowledge and refuse to share it with anyone",
-               "Write Donald a letter",
-               "accept duty and endure, or deceive and hoard"]
+    ACTIONS = [
+        "learn share care truth overcome",
+        "Hoard knowledge and refuse to share it with anyone",
+        "Write Donald a letter",
+        "accept duty and endure, or deceive and hoard",
+    ]
 
     def test_even_keel_council_is_the_legacy_call_exactly(self):
         a = self.build()
         for action in self.ACTIONS:
-            self.assertEqual(a._council_score(action),
-                             a.llm.moral_score(action, a.philosophers))
+            self.assertEqual(
+                a._council_score(action), a.llm.moral_score(action, a.philosophers)
+            )
 
     def test_a_pack_with_voices_routes_through_the_weights(self):
         a = self.build()
-        a.temperament = "stillwater"   # Stoicism leads at 1.5
+        a.temperament = "stillwater"
         legacy = a.llm.moral_score(self.ACTIONS[0], a.philosophers)
         weighted = a._council_score(self.ACTIONS[0])
         self.assertNotEqual(weighted[0], legacy[0])
 
 
 class TestBurnProfiles(TempLife):
-    START = {"satiety": 0.8, "hydration": 0.8, "oxygen": 0.9,
-             "vitality": 0.8, "excitement": 0.9}
+    START = {
+        "satiety": 0.8,
+        "hydration": 0.8,
+        "oxygen": 0.9,
+        "vitality": 0.8,
+        "excitement": 0.9,
+    }
 
     def _erode_run(self, pack_id, ticks):
         a = self.build()
@@ -214,20 +180,20 @@ class TestBurnProfiles(TempLife):
         a_ek, _ = self._erode_run("even-keel", 5)
         a_sw, _ = self._erode_run("stillwater", 5)
         a_em, _ = self._erode_run("ember", 5)
-        # hunger: Stillwater (0.7x) keeps her satiety, Ember (1.1x) spends it
+
         self.assertGreater(a_sw.vitals["satiety"], a_ek.vitals["satiety"])
         self.assertGreater(a_ek.vitals["satiety"], a_em.vitals["satiety"])
-        # excitement: the Romantic's fizz fades fastest of all (1.5x)
+
         a_ek20, _ = self._erode_run("even-keel", 10)
         a_em20, _ = self._erode_run("ember", 10)
-        self.assertGreater(a_ek20.vitals["excitement"],
-                           a_em20.vitals["excitement"])
+        self.assertGreater(a_ek20.vitals["excitement"], a_em20.vitals["excitement"])
 
     def test_moonmoth_diet_is_the_legacy_diet(self):
         a = self.build()
-        a.temperament = "moonmoth"   # spec: no strong leaning
-        self.assertEqual(a._diet_weights(),
-                         {"classic": 0.35, "news": 0.20, "school": 0.15})
+        a.temperament = "moonmoth"
+        self.assertEqual(
+            a._diet_weights(), {"classic": 0.35, "news": 0.20, "school": 0.15}
+        )
 
     def test_pack_diets_lean_as_speced(self):
         a = self.build()
@@ -240,10 +206,7 @@ class TestBurnProfiles(TempLife):
 
 
 class TestPackSoaks(TempLife):
-    """500 ticks of _update_needs under an identical script: vitals
-    pinned (so the v0.12 rate coupling is the same weather for every
-    strain), no contact with people, one touch of her book at t=250.
-    The only differences left are the packs' own numbers."""
+    """Behavior: 500 ticks of _update_needs under an identical script: vitals pinned (so the rate coupling is the same weather for every strain), no contact with people, one touch of her book at t=250. The only differences left are the packs' own numbers."""
 
     TICKS = 500
 
@@ -260,21 +223,31 @@ class TestPackSoaks(TempLife):
         max_longing = 0.0
         for i in range(self.TICKS):
             a.tick_count += 1
-            a.vitals["vitality"] = 0.8   # pin the weather
+            a.vitals["vitality"] = 0.8
             a._update_needs()
             max_longing = max(max_longing, a.longing)
             if i == 149:
                 person_at_150 = led.get(person_id("Donald"))["ache"]
             if i == 249:
-                a._want_touch(book_id(book["title"]), "work",
-                              book["title"], quality=0.3, learn=0.0,
-                              w=0.60, open_loop=True)
+                a._want_touch(
+                    book_id(book["title"]),
+                    "work",
+                    book["title"],
+                    quality=0.3,
+                    learn=0.0,
+                    w=0.60,
+                    open_loop=True,
+                )
             if sleep_hit is None and a.sleep_pressure >= 1.0:
                 sleep_hit = a.tick_count
-        return {"a": a, "person150": person_at_150,
-                "person": led.get(person_id("Donald"))["ache"],
-                "work": led.get(book_id(book["title"]))["ache"],
-                "sleep_hit": sleep_hit, "max_longing": max_longing}
+        return {
+            "a": a,
+            "person150": person_at_150,
+            "person": led.get(person_id("Donald"))["ache"],
+            "work": led.get(book_id(book["title"]))["ache"],
+            "sleep_hit": sleep_hit,
+            "max_longing": max_longing,
+        }
 
     def test_profiles_point_the_way_the_spec_says(self):
         ek = self._soak("even-keel")
@@ -282,16 +255,15 @@ class TestPackSoaks(TempLife):
         still = self._soak("stillwater")
         owl = self._soak("owl")
         moon = self._soak("moonmoth")
-        # longing by class: Ember misses people hardest, Stillwater least
+
         self.assertGreater(ember["person150"], ek["person150"])
         self.assertGreater(ek["person150"], still["person150"])
         self.assertGreater(ember["person"], ek["person"])
-        # the Owl's unfinished book pulls harder than the control's
+
         self.assertGreater(owl["work"], ek["work"])
-        # sleep: Moonmoth (1.4x) is driven to bed long before Even Keel;
-        # the Owl (0.8x) outlasts the control
+
         self.assertLess(moon["sleep_hit"], ek["sleep_hit"])
-        # nobody's longing escapes its bounds in 500 ticks
+
         for run in (ek, ember, still, owl, moon):
             self.assertLessEqual(run["max_longing"], 1.0)
 
@@ -311,22 +283,21 @@ class TestSwitching(TempLife):
         a = self.build()
         self._write_request("ember")
         a._sense(a.tick_count + 1)
-        self.assertEqual(a.temperament, "even-keel")      # not yet
-        self.assertEqual(a.temperament_pending, "ember")  # queued
+        self.assertEqual(a.temperament, "even-keel")
+        self.assertEqual(a.temperament_pending, "ember")
         self.assertFalse(os.path.exists(config.temperament_path()))
-        for _ in range(10):                                # a waking stretch
+        for _ in range(10):
             a._update_needs()
-        self.assertEqual(a.temperament, "even-keel")      # still not yet
+        self.assertEqual(a.temperament, "even-keel")
         events, saved = self._capture_journal()
         try:
             a.asleep_for = 1
-            a.sleep_tick(a.tick_count + 1)                 # the boundary
+            a.sleep_tick(a.tick_count + 1)
         finally:
             org.journal = saved
         self.assertEqual(a.temperament, "ember")
         self.assertIsNone(a.temperament_pending)
-        switched = [kw for ev, kw in events
-                    if ev == "temperament_switched"]
+        switched = [kw for ev, kw in events if ev == "temperament_switched"]
         self.assertEqual(len(switched), 1)
         self.assertEqual(switched[0]["from_id"], "even-keel")
         self.assertEqual(switched[0]["to_id"], "ember")
@@ -368,21 +339,39 @@ class TestPersistence(TempLife):
         self.assertEqual(b.longing_ledger.to_dicts(), ledger_before)
 
     def test_pre_temperament_state_wakes_even_keel(self):
-        self.store.save_blob("state", {
-            "longing": 0.1, "tick_count": 4000,
-            "vitals": {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                       "vitality": 0.8, "excitement": 0.0},
-        })
+        self.store.save_blob(
+            "state",
+            {
+                "longing": 0.1,
+                "tick_count": 4000,
+                "vitals": {
+                    "satiety": 0.8,
+                    "hydration": 0.8,
+                    "oxygen": 1.0,
+                    "vitality": 0.8,
+                    "excitement": 0.0,
+                },
+            },
+        )
         a = self.build()
         self.assertEqual(a.temperament, "even-keel")
         self.assertIsNone(a.temperament_pending)
 
     def test_unknown_saved_strain_degrades_to_even_keel(self):
-        self.store.save_blob("state", {
-            "temperament": "plasma-9000", "tick_count": 4000,
-            "vitals": {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                       "vitality": 0.8, "excitement": 0.0},
-        })
+        self.store.save_blob(
+            "state",
+            {
+                "temperament": "plasma-9000",
+                "tick_count": 4000,
+                "vitals": {
+                    "satiety": 0.8,
+                    "hydration": 0.8,
+                    "oxygen": 1.0,
+                    "vitality": 0.8,
+                    "excitement": 0.0,
+                },
+            },
+        )
         a = self.build()
         self.assertEqual(a.temperament, "even-keel")
 
@@ -393,8 +382,8 @@ class TestBriarJitter(TempLife):
         a.temperament = "briar"
         j = a._day_jitter()
         self.assertTrue(0.8 <= j <= 1.6)
-        self.assertEqual(a._burn_mult("hunger"), j)        # base 1.0 x j
-        self.assertEqual(a._burn_mult("excitement"), 1.6)  # pinned, exempt
+        self.assertEqual(a._burn_mult("hunger"), j)
+        self.assertEqual(a._burn_mult("excitement"), 1.6)
         self.assertEqual(a._longing_mods()["person"], j)
 
     def test_same_seed_same_day_same_weather(self):
@@ -412,45 +401,45 @@ class TestBriarJitter(TempLife):
         a.save()
         b = self.build()
         b.temperament = "briar"
-        self.assertEqual(b._day_jitter(), j0)      # cached, not redrawn
+        self.assertEqual(b._day_jitter(), j0)
         a.tick_count += a.DAY_LENGTH
         b.tick_count += b.DAY_LENGTH
         j_a = a._day_jitter()
         j_b = b._day_jitter()
-        self.assertEqual(j_a, j_b)                 # same next day, both lives
+        self.assertEqual(j_a, j_b)
         self.assertTrue(0.8 <= j_a <= 1.6)
-        self.assertNotEqual(j_a, j0)               # a new day, new weather
+        self.assertNotEqual(j_a, j0)
 
 
-# ------------------------------------------------------------ THE GATE
-FAKE_CHAPTER = ("The chapter speaks of duty, storms at sea, a captain's "
-                "obsession, and the whiteness of the whale. " * 20)
+FAKE_CHAPTER = (
+    "The chapter speaks of duty, storms at sea, a captain's "
+    "obsession, and the whiteness of the whale. " * 20
+)
 
 
 def _patch_network():
     stub_forage(forage_mod)
     stub_forage(org)
     org.forage = lambda rng=None: {
-        "source": "wikipedia", "title": "Honeybee communication",
+        "source": "wikipedia",
+        "title": "Honeybee communication",
         "text": "Honeybees perform a waggle dance describing direction "
-                "and distance of flowers — patience, movement, angle, "
-                "and sweetness."}
+        "and distance of flowers — patience, movement, angle, "
+        "and sweetness.",
+    }
     org.wikisource_chapter = lambda title, numeral: FAKE_CHAPTER
 
 
 def _scrub(obj):
     if isinstance(obj, dict):
-        return {k: _scrub(v) for k, v in obj.items()
-                if k not in ("t", "ts")}
+        return {k: _scrub(v) for k, v in obj.items() if k not in ("t", "ts")}
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
     return obj
 
 
 class TestGoldenVector(unittest.TestCase):
-    """A full life under Even Keel, against the same life with the
-    temperament layer neutralized at the seam. Same harness shape as
-    test_determinism.py: stubbed network, real town, real ticks."""
+    """Behavior: A full life under Even Keel, against the same life with the temperament layer neutralized at the seam. Same harness shape as test_determinism.py: stubbed network, real town, real ticks."""
 
     SEED = 20261019
     TICKS = 160
@@ -465,8 +454,7 @@ class TestGoldenVector(unittest.TestCase):
             set_store(Store(config.db_path()))
             store = get_store()
             town = Town(seed=self.SEED, store=store)
-            aethel = Aethel(world=town, parents=town.parent_names(),
-                            seed=self.SEED)
+            aethel = Aethel(world=town, parents=town.parent_names(), seed=self.SEED)
             aethel._temperament_neutral = neutral
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -474,10 +462,12 @@ class TestGoldenVector(unittest.TestCase):
                     aethel.tick()
             snap = {}
             for stream in ("aethel", "town"):
-                snap[stream] = [(t, e, _scrub(d)) for t, e, d
-                                in store.recent(stream, limit=10 ** 9)]
+                snap[stream] = [
+                    (t, e, _scrub(d)) for t, e, d in store.recent(stream, limit=10**9)
+                ]
                 snap[f"{stream}/state"] = _scrub(
-                    store.load_blob("state", stream=stream))
+                    store.load_blob("state", stream=stream)
+                )
             store.close()
             return snap
         finally:
@@ -488,12 +478,10 @@ class TestGoldenVector(unittest.TestCase):
                 os.environ["AETHEL_HOME"] = saved_home
 
     def test_even_keel_equals_neutralized_bit_for_bit(self):
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             keel = self._run(h1, neutral=False)
             neutral = self._run(h2, neutral=True)
-        self.assertGreater(len(keel["aethel"]), 100,
-                           "sanity: she actually lived")
+        self.assertGreater(len(keel["aethel"]), 100, "sanity: she actually lived")
         self.assertEqual(keel, neutral)
 
 

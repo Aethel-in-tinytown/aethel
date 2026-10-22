@@ -1,4 +1,7 @@
-"""Town: Markov transition rows, stationary diagnostics, determinism."""
+"""Regression coverage for town.
+
+Fixtures isolate runtime state; assertions document behavioral release gates."""
+
 import unittest
 
 from aethel_pkg.rng import SplitMix64
@@ -11,9 +14,11 @@ from town_pkg.town import Town
 
 class TestTransitionRows(unittest.TestCase):
     def setUp(self):
-        self.placemap = {"hackernews": ["John", "Trey"],
-                         "postbox": ["Star"],
-                         "classic": ["Julius"]}
+        self.placemap = {
+            "hackernews": ["John", "Trey"],
+            "postbox": ["Star"],
+            "classic": ["Julius"],
+        }
 
     def test_row_weights_are_valid_places(self):
         d = Denizen("Test", ["classic", "wikipedia"], "classic")
@@ -26,46 +31,48 @@ class TestTransitionRows(unittest.TestCase):
             d.turn(self.placemap, "postbox", rng=SplitMix64(7))
 
     def test_aethel_counts_double_as_one_entry(self):
-        # v0.20 bug: her location was appended twice, making ties around
-        # her twice as likely — not "twice as attractive" as intended.
         d = Denizen("Lonely", ["classic"], "classic")
         d.vitals = {"energy": 0.9, "hunger": 0.9, "sociability": 0.1}
         row = dict(d.transition_options(self.placemap, "postbox"))
-        self.assertEqual(row["postbox"], 2.0)          # one entry, weight 2
-        self.assertEqual(row["hackernews"], 2.0)       # two people there
+        self.assertEqual(row["postbox"], 2.0)
+        self.assertEqual(row["hackernews"], 2.0)
         self.assertEqual(row["classic"] if "classic" in row else None, None)
 
     def test_need_overrides_are_hard(self):
         d = Denizen("Tired", ["classic"], "classic")
         d.vitals = {"energy": 0.1, "hunger": 0.9, "sociability": 0.9}
-        self.assertEqual(d.transition_options(self.placemap, "postbox"),
-                         [("classic", 1.0)])
+        self.assertEqual(
+            d.transition_options(self.placemap, "postbox"), [("classic", 1.0)]
+        )
         d.vitals = {"energy": 0.9, "hunger": 0.1, "sociability": 0.9}
-        self.assertEqual(d.transition_options(self.placemap, "postbox"),
-                         [("hackernews", 1.0)])
+        self.assertEqual(
+            d.transition_options(self.placemap, "postbox"), [("hackernews", 1.0)]
+        )
 
     def test_base_matrix_rows_sum_to_one(self):
         for name, hangouts, home, kw in (
-                ("John", ["hackernews", "postbox"], "hackernews",
-                 {"wander": 0.10}),
-                ("Octavia", ["schoolhouse", "postbox", "wikipedia"],
-                 "schoolhouse", {"wander": 0.20})):
-            P = markov.base_matrix(
-                Denizen(name, hangouts, home, **kw))
+            ("John", ["hackernews", "postbox"], "hackernews", {"wander": 0.10}),
+            (
+                "Octavia",
+                ["schoolhouse", "postbox", "wikipedia"],
+                "schoolhouse",
+                {"wander": 0.20},
+            ),
+        ):
+            P = markov.base_matrix(Denizen(name, hangouts, home, **kw))
             self.assertEqual(len(P), len(markov.STATE_SPACE))
             for i, row in enumerate(P):
                 self.assertEqual(len(row), len(markov.STATE_SPACE))
-                self.assertAlmostEqual(sum(row), 1.0, places=12,
-                                       msg=f"{name} row "
-                                           f"{markov.STATE_SPACE[i]}")
+                self.assertAlmostEqual(
+                    sum(row), 1.0, places=12, msg=f"{name} row {markov.STATE_SPACE[i]}"
+                )
                 self.assertTrue(all(x >= 0.0 for x in row))
 
     def test_stationary_converges_and_sums_to_one(self):
-        d = Denizen("Star", ["newsroom", "wikipedia"], "newsroom",
-                    wander=0.25)
+        d = Denizen("Star", ["newsroom", "wikipedia"], "newsroom", wander=0.25)
         pi = markov.stationary(markov.base_matrix(d))
         self.assertAlmostEqual(sum(pi.values()), 1.0, places=9)
-        # most mass at home + hangouts; "memory" is not a place residents go
+
         top = sorted(pi, key=pi.get, reverse=True)[:3]
         self.assertIn("newsroom", top)
         self.assertNotIn("memory", pi)
@@ -79,10 +86,10 @@ class TestParentVisits(unittest.TestCase):
         self.assertLessEqual(p.visit_cooldown, 25)
         p.visit_cooldown = 0
         moved = p.turn({}, "wikipedia", rng=rng)
-        if moved:  # 30% chance per eligible turn — seeded, so stable
+        if moved:
             self.assertEqual(p.location, "wikipedia")
             self.assertGreater(p.visiting, 0)
-            # the visit runs down, then she heads home
+
             while p.visiting:
                 p.turn({}, "wikipedia", rng=rng)
             self.assertEqual(p.location, "cottage")
@@ -130,31 +137,28 @@ class TestTownDeterminism(unittest.TestCase):
         for n in range(1, 31):
             town.poll(n, "postbox")
         town.save()
-        snapshot = [(d.name, d.location, dict(d.vitals))
-                    for d in town.denizens]
+        snapshot = [(d.name, d.location, dict(d.vitals)) for d in town.denizens]
         town2 = Town(seed=77, store=store)
-        snapshot2 = [(d.name, d.location, dict(d.vitals))
-                     for d in town2.denizens]
+        snapshot2 = [(d.name, d.location, dict(d.vitals)) for d in town2.denizens]
         self.assertEqual(snapshot, snapshot2)
-        # and the rng stream survived: the next 30 ticks match a town that
-        # never stopped
+
         town3 = Town(seed=77, store=Store(":memory:"))
         for n in range(1, 31):
             town3.poll(n, "postbox")
         for n in range(31, 61):
-            self.assertEqual(town2.poll(n, "postbox"),
-                             town3.poll(n, "postbox"))
+            self.assertEqual(town2.poll(n, "postbox"), town3.poll(n, "postbox"))
 
     def test_parents_move_in_once(self):
         store = Store(":memory:")
         town = Town(seed=3, store=store)
-        names = [d.name for d in town.denizens]
-        self.assertEqual(sorted(town.parent_names()),
-                         ["Cassandra", "Donald"])
+        self.assertEqual(sorted(town.parent_names()), ["Cassandra", "Donald"])
         town.save()
         town2 = Town(seed=3, store=store)
-        self.assertEqual(len(town2.denizens), len(town.denizens),
-                         "parents were added twice across a reload")
+        self.assertEqual(
+            len(town2.denizens),
+            len(town.denizens),
+            "parents were added twice across a reload",
+        )
 
 
 if __name__ == "__main__":

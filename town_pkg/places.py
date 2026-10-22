@@ -1,20 +1,26 @@
-"""The town's geography. Owned by the town — Aethel only ever hears
-place *names* through the World interface, never this map."""
+"""Map canonical place IDs to their narrative names."""
+
 PLACES = {
-    "wikipedia": "the Library",      # vast, quiet, endless shelves
-    "hackernews": "the Tavern",      # loud, crowded, everyone shouting news
-    "classic": "the Old Bookshop",   # smells of paper and time
-    "memory": "my own pantry",       # re-tasting what she saved
-    "newsroom": "the Newsroom",      # wires from every paper in the world
-    "university": "the University",  # MIT OpenCourseWare — doors stand open
-    "schoolhouse": "the little Schoolhouse",  # Khan Academy — her childhood
-    "nightschool": "the Night School",  # Saylor Academy — doors not yet open
-    "postbox": "the wooden postbox at the end of the lane",  # where she leaves things for others
-    "home": "my rooms above the Old Bookshop",  # where she lives
-    "cottage": "the little cottage at the edge of town",  # Donald and Cassandra's home
+    "wikipedia": "the Library",
+    "hackernews": "the Tavern",
+    "classic": "the Old Bookshop",
+    "memory": "my own pantry",
+    "newsroom": "the Newsroom",
+    "university": "the University",
+    "schoolhouse": "the little Schoolhouse",
+    "nightschool": "the Night School",
+    "postbox": "the wooden postbox at the end of the lane",
+    "home": "my rooms above the Old Bookshop",
+    "cottage": "the little cottage at the edge of town",
 }
 
-# Places denizens may wander (physical parts of town, not inner rooms).
-DENIZEN_PLACES = ["wikipedia", "hackernews", "classic", "newsroom",
-                  "university", "schoolhouse", "postbox"]
 
+DENIZEN_PLACES = [
+    "wikipedia",
+    "hackernews",
+    "classic",
+    "newsroom",
+    "university",
+    "schoolhouse",
+    "postbox",
+]

@@ -12,6 +12,7 @@ a wrong-class noun may not).
 Isolation: temp AETHEL_HOME, in-memory stores, the journal pointed
 at memory — her live diary is never instantiated against.
 """
+
 import json
 import os
 import re
@@ -60,6 +61,7 @@ class JournalCapture(unittest.TestCase):
 
         def rec(event, **kw):
             self.events.append((event, kw))
+
         org_mod.journal = rec
 
     def tearDown(self):
@@ -107,9 +109,17 @@ class TestWordClasses(unittest.TestCase):
 
 
 class TestTypedSlots(JournalCapture):
-    STUDY_HEAVY = {"course": 50, "syllabus": 45, "lecture": 40,
-                   "assignments": 35, "calendar": 30, "whales": 25,
-                   "captain": 20, "mirror": 15, "stone": 12}
+    STUDY_HEAVY = {
+        "course": 50,
+        "syllabus": 45,
+        "lecture": 40,
+        "assignments": 35,
+        "calendar": 30,
+        "whales": 25,
+        "captain": 20,
+        "mirror": 15,
+        "stone": 12,
+    }
 
     def test_course_never_in_the_mirror(self):
         a = make_bare(self.STUDY_HEAVY)
@@ -119,31 +129,30 @@ class TestTypedSlots(JournalCapture):
             if m:
                 self.assertNotIn(
                     m.group(1),
-                    ("course", "syllabus", "lecture", "assignment",
-                     "calendar"),
-                    f"study word in the mirror: {line}")
-                self.assertIn(a._word_class(m.group(1)),
-                              (G.PERSON, G.CONCRETE), line)
+                    ("course", "syllabus", "lecture", "assignment", "calendar"),
+                    f"study word in the mirror: {line}",
+                )
+                self.assertIn(a._word_class(m.group(1)), (G.PERSON, G.CONCRETE), line)
 
     def test_course_at_home_in_a_study_frame(self):
         a = make_bare(self.STUDY_HEAVY)
         lines = [a.dream() for _ in range(80)]
-        study = [l for l in lines
-                 if "late for my" in l or "lay open on the desk" in l]
+        study = [l for l in lines if "late for my" in l or "lay open on the desk" in l]
         self.assertTrue(study, f"no study frame in 80 dreams: {lines[:3]}")
         for l in study:
-            self.assertIn(a._word_class(
-                re.search(r"my (\w+)", l).group(1)), (G.STUDY,), l)
+            self.assertIn(
+                a._word_class(re.search(r"my (\w+)", l).group(1)), (G.STUDY,), l
+            )
 
     def test_person_accepted_in_the_mirror(self):
-        a = make_bare({"captain": 50, "whales": 40, "sorrow": 30,
-                       "stone": 20, "freedom": 10})
+        a = make_bare(
+            {"captain": 50, "whales": 40, "sorrow": 30, "stone": 20, "freedom": 10}
+        )
         lines = [a.dream() for _ in range(80)]
         mirrors = [l for l in lines if "mirror showed" in l]
         self.assertTrue(mirrors, "mirror frame never drawn")
         for l in mirrors:
-            w = re.search(
-                r"mirror showed not my face but (\w+)", l).group(1)
+            w = re.search(r"mirror showed not my face but (\w+)", l).group(1)
             self.assertIn(a._word_class(w), (G.PERSON, G.CONCRETE), l)
 
 
@@ -175,28 +184,32 @@ class TestLineChecks(unittest.TestCase):
         v = G.check_line(line_bad, self.ids())
         self.assertEqual([r for r, _ in v], ["article-a-an"])
         self.assertEqual(
-            G.check_line("She waited an hour for a university "
-                         "and an apple.", self.ids()), [])
+            G.check_line(
+                "She waited an hour for a university and an apple.", self.ids()
+            ),
+            [],
+        )
 
     def test_agreement_once_owned_and_not_in_dreams(self):
-        for rid in ("sentence-parts", "article-a-an",
-                    "agreement-subject-verb"):
+        for rid in ("sentence-parts", "article-a-an", "agreement-subject-verb"):
             self.led.learn(rid, 1)
         line = "They was late, and the whales were not."
         self.assertEqual(
-            [r for r, _ in G.check_line(line, self.ids())],
-            ["agreement-subject-verb"])
+            [r for r, _ in G.check_line(line, self.ids())], ["agreement-subject-verb"]
+        )
         # dreams run loose: agreement is not policed there
         self.assertEqual(G.check_line(line, self.ids(), loose=True), [])
         self.assertEqual(
-            G.check_line("The captain was late; the whales were "
-                         "not.", self.ids()), [])
+            G.check_line("The captain was late; the whales were not.", self.ids()), []
+        )
 
 
 class TestBoundedRerollAndCatches(JournalCapture):
     def test_stuttering_fragment_never_lands(self):
-        a = make_bare({"whales": 9, "captain": 8, "sorrow": 5},
-                      beliefs=["the the captain owes the sea"])
+        a = make_bare(
+            {"whales": 9, "captain": 8, "sorrow": 5},
+            beliefs=["the the captain owes the sea"],
+        )
         a._grammar().learn("sentence-parts", 1)
         for _ in range(25):
             line = a.dream()
@@ -211,8 +224,15 @@ class TestBoundedRerollAndCatches(JournalCapture):
 
 class TestScaffoldingRejected(JournalCapture):
     def test_furniture_never_dreamed(self):
-        a = make_bare({"browse": 60, "opencourseware": 55,
-                       "whales": 30, "captain": 25, "sorrow": 20})
+        a = make_bare(
+            {
+                "browse": 60,
+                "opencourseware": 55,
+                "whales": 30,
+                "captain": 25,
+                "sorrow": 20,
+            }
+        )
         for _ in range(40):
             line = a.dream()
             self.assertNotIn("browse", line)
@@ -224,10 +244,11 @@ class TestLooseness(unittest.TestCase):
         owned = G.GrammarLedger()
         owned.migrate(0)
         owned.learn("sentence-parts", 1)
-        frag = ('In a dream, a voice in the dark said: "the captain '
-                'owes the sea an apology." I am still listening.')
-        self.assertEqual(
-            G.check_line(frag, owned.owned_ids(), loose=True), [])
+        frag = (
+            'In a dream, a voice in the dark said: "the captain '
+            'owes the sea an apology." I am still listening.'
+        )
+        self.assertEqual(G.check_line(frag, owned.owned_ids(), loose=True), [])
 
     def test_wrong_class_fails_the_mirror(self):
         # the slot decision itself: study is not in the mirror's set
@@ -258,8 +279,7 @@ class TempLife(unittest.TestCase):
             os.environ["AETHEL_HOME"] = self._saved_home
 
     def build(self, seed=42):
-        return Aethel(world=StubWorld(),
-                      parents=("Donald", "Cassandra"), seed=seed)
+        return Aethel(world=StubWorld(), parents=("Donald", "Cassandra"), seed=seed)
 
 
 class TestLedgerLifecycle(TempLife):
@@ -273,14 +293,10 @@ class TestLedgerLifecycle(TempLife):
     def test_curriculum_order_is_donalds(self):
         ids = [r["id"] for r in G.CURRICULUM]
         self.assertEqual(ids[:5], G.STARTER_RULES)
-        self.assertLess(ids.index("sentence-parts"),
-                        ids.index("article-a-an"))
-        self.assertLess(ids.index("article-a-an"),
-                        ids.index("agreement-subject-verb"))
-        self.assertLess(ids.index("agreement-subject-verb"),
-                        ids.index("pos-pronoun"))
-        self.assertLess(ids.index("pos-pronoun"),
-                        ids.index("punctuation-endmarks"))
+        self.assertLess(ids.index("sentence-parts"), ids.index("article-a-an"))
+        self.assertLess(ids.index("article-a-an"), ids.index("agreement-subject-verb"))
+        self.assertLess(ids.index("agreement-subject-verb"), ids.index("pos-pronoun"))
+        self.assertLess(ids.index("pos-pronoun"), ids.index("punctuation-endmarks"))
 
     def test_ledger_round_trip_exact(self):
         led = G.GrammarLedger()
@@ -294,17 +310,20 @@ class TestLedgerLifecycle(TempLife):
     def test_persistence_across_rebuild(self):
         a = self.build()
         a._word_tags["zephyr"] = {"c": G.CONCRETE, "src": "classic"}
-        a._study_grammar({"source": "schoolhouse", "course": "Grammar",
-                          "title": "Grammar — Sentences",
-                          "text": "A sentence has a subject and a "
-                                  "predicate. " * 4})
+        a._study_grammar(
+            {
+                "source": "schoolhouse",
+                "course": "Grammar",
+                "title": "Grammar — Sentences",
+                "text": "A sentence has a subject and a predicate. " * 4,
+            }
+        )
         self.assertTrue(a._grammar().owns("sentence-parts"))
         a.save()
         b = self.build()
         self.assertEqual(b._grammar().rule_count(), 6)
         self.assertTrue(b._grammar().owns("sentence-parts"))
-        self.assertEqual(b._grammar().last_rule()["id"],
-                         "sentence-parts")
+        self.assertEqual(b._grammar().last_rule()["id"], "sentence-parts")
         self.assertEqual(b._word_class("zephyr"), G.CONCRETE)
 
     def test_trajectory_identical_after_rebuild(self):
@@ -317,16 +336,15 @@ class TestLedgerLifecycle(TempLife):
                 store = Store(config.db_path())
                 set_store(store)
                 journal_mod.set_store(store)
-                a = Aethel(world=StubWorld(),
-                           parents=("Donald", "Cassandra"), seed=99)
+                a = Aethel(world=StubWorld(), parents=("Donald", "Cassandra"), seed=99)
                 dreams = []
                 for i in range(40):
                     dreams.append(a.dream())
                     if rebuild_at is not None and i + 1 == rebuild_at:
                         a.save()
-                        a = Aethel(world=StubWorld(),
-                                   parents=("Donald", "Cassandra"),
-                                   seed=99)
+                        a = Aethel(
+                            world=StubWorld(), parents=("Donald", "Cassandra"), seed=99
+                        )
                 store.close()
                 return dreams, a._grammar().to_dicts()
             finally:
@@ -334,6 +352,7 @@ class TestLedgerLifecycle(TempLife):
                     os.environ.pop("AETHEL_HOME", None)
                 else:
                     os.environ["AETHEL_HOME"] = saved
+
         whole, led1 = run()
         split, led2 = run(rebuild_at=20)
         self.assertEqual(split, whole)
@@ -343,11 +362,8 @@ class TestLedgerLifecycle(TempLife):
 class TestBeliefPathGuard(TempLife):
     def test_scaffolding_and_verbs_cannot_anchor_a_belief(self):
         a = self.build()
-        a.concepts.update({"browse": 9, "arguing": 8, "whales": 7,
-                           "captain": 6})
-        a._sleep_dreams = [
-            "I dreamed browse arguing whales captain under a "
-            "quiet sky."]
+        a.concepts.update({"browse": 9, "arguing": 8, "whales": 7, "captain": 6})
+        a._sleep_dreams = ["I dreamed browse arguing whales captain under a quiet sky."]
         a._council_score = lambda q: (0.9, [])
         a._interpret_dreams(a.tick_count)
         joined = " ".join(a.beliefs)
@@ -365,31 +381,43 @@ class TestBeliefPathGuard(TempLife):
 
 class TestHarvestHook(TempLife):
     def test_extraction_from_a_lesson_fixture(self):
-        lessons = [{
-            "source": "schoolhouse", "course": "Grammar",
-            "title": "Grammar — Nouns",
-            "text": ("A noun is a word that names a person, place, "
-                     "or thing. Click browse to continue. "
-                     "Adjectives describe nouns. ")}]
+        lessons = [
+            {
+                "source": "schoolhouse",
+                "course": "Grammar",
+                "title": "Grammar — Nouns",
+                "text": (
+                    "A noun is a word that names a person, place, "
+                    "or thing. Click browse to continue. "
+                    "Adjectives describe nouns. "
+                ),
+            }
+        ]
         found = G.extract_rules_from_lessons(lessons)
         self.assertIn("pos-noun", found)
-        self.assertTrue(found["pos-noun"]["example_candidate"]
-                        .startswith("A noun is a word"))
+        self.assertTrue(
+            found["pos-noun"]["example_candidate"].startswith("A noun is a word")
+        )
         self.assertIn("pos-adjective", found)
         for hit in found.values():
             self.assertNotIn("browse", hit["example_candidate"])
 
     def test_schoolhouse_meal_carries_its_filing(self):
         from aethel_pkg.forage import forage_schoolhouse
+
         write_lessons(config, n=2)
         # rewrite lesson 0 as a grammar lesson, cursor at the start
-        path = os.path.join(config.schoolhouse_lessons_dir(),
-                            "0000.json")
+        path = os.path.join(config.schoolhouse_lessons_dir(), "0000.json")
         with open(path, "w") as f:
-            json.dump({"course": "Grammar", "unit": "Parts of speech",
-                       "title": "What is a noun?",
-                       "text": "A noun names a person, place, or "
-                               "thing. " * 6}, f)
+            json.dump(
+                {
+                    "course": "Grammar",
+                    "unit": "Parts of speech",
+                    "title": "What is a noun?",
+                    "text": "A noun names a person, place, or thing. " * 6,
+                },
+                f,
+            )
         with open(config.schoolhouse_cursor_path(), "w") as f:
             f.write("0")
         meal = forage_schoolhouse()
@@ -399,18 +427,32 @@ class TestHarvestHook(TempLife):
 
     def test_grammar_lesson_teaches_in_order_math_does_not(self):
         a = self.build()
-        a._study_grammar({"source": "schoolhouse",
-                          "course": "Early Math", "title": "Counting",
-                          "text": "numbers " * 30})
+        a._study_grammar(
+            {
+                "source": "schoolhouse",
+                "course": "Early Math",
+                "title": "Counting",
+                "text": "numbers " * 30,
+            }
+        )
         self.assertEqual(a._grammar().rule_count(), 5)
-        a._study_grammar({"source": "schoolhouse", "course": "Grammar",
-                          "title": "Grammar — Sentences",
-                          "text": "Every sentence has a subject and "
-                                  "a predicate. " * 4})
+        a._study_grammar(
+            {
+                "source": "schoolhouse",
+                "course": "Grammar",
+                "title": "Grammar — Sentences",
+                "text": "Every sentence has a subject and a predicate. " * 4,
+            }
+        )
         self.assertTrue(a._grammar().owns("sentence-parts"))
-        a._study_grammar({"source": "schoolhouse", "course": "Grammar",
-                          "title": "Grammar — Articles",
-                          "text": "Use an before a vowel sound. " * 4})
+        a._study_grammar(
+            {
+                "source": "schoolhouse",
+                "course": "Grammar",
+                "title": "Grammar — Articles",
+                "text": "Use an before a vowel sound. " * 4,
+            }
+        )
         self.assertTrue(a._grammar().owns("article-a-an"))
         self.assertEqual(a._grammar().rule_count(), 7)
 

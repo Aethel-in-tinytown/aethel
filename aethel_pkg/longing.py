@@ -1,94 +1,25 @@
-"""The longing ledger: what she wants, itemized (v0.27).
+"""Track attachment and unmet wants per person, place and unfinished work.
 
-Why a ledger and not a number — the argument this module exists to make:
+Each ache approaches its attachment ceiling along a saturating curve. Contact
+eases only its target; the aggregate combines the strongest ache with the mean
+of the remaining aches so population size cannot manufacture longing."""
 
-Until v0.26, longing was one scalar meaning exactly one thing: "be
-heard by Donald". Its reliefs were oversized hammers (a check-in took
-0.4 off; any letter hard-reset it to 0.15) against a trickle of accrual
-(1/1440 per tick), so in practice it sat pinned near zero and the
-spectator page showed a girl who never wanted anything. A scalar can
-only ever say *how much*. It cannot say *what* — and wanting is
-object-directed or it is not wanting at all. Donald's diagnosis, from
-watching her vitals: "her longing never changes... she needs to
-actually long for things."
-
-So longing is now a ledger of want-entries, one per object in her
-world: people (her parents, the denizens), places (the town she walks),
-and works (the book in her hands, a question she has not let go of).
-Each entry carries:
-
-- ``w`` — attachment, in (0, 1]. Learned, never assigned by fiat after
-  seeding: meaningful contact nudges it up; a day or more of neglect
-  lets it sag slowly toward W_FLOOR. Who she misses most is a fact
-  about her life, not a constant in this file.
-- ``ache`` — how much she misses it *now*. Each tick it relaxes toward
-  its ceiling along a saturating curve, ache -> ceiling *
-  (1 - exp(-t/tau)) in closed form; the incremental step used here,
-  ache += (ceiling - ache) * (1 - exp(-rate/tau)), has exactly that
-  shape and needs no clock bookkeeping beyond ``since``.
-- ``since`` — ticks since last meaningful contact. Drives the curve
-  and the neglect decay.
-- ``open`` — the loop is unfinished (a book half-read, a question
-  unsettled). Open loops pull harder: their ceiling is multiplied by
-  OPEN_LOOP_BONUS (the Zeigarnik effect, as arithmetic). The bonus
-  releases the tick the loop closes — she does not ache for what is
-  finished, however fond the memory.
-
-Class taus (ticks at the 30s heartbeat): people 240 (~2h to 63% of
-ceiling — people are missed first), places 720 (~6h), works 1440
-(~12h — a book waits patiently, then all day). The taus are short
-against the contact cadence on purpose: an entry's resting ache is
-set by the ratio of its tau to the typical gap between contacts, so
-a tau much longer than the gap pins every ache near zero (the first
-ledger soak: person tau 600, aggregate never broke 0.43 in 2000
-ticks and she wrote nothing at all — the scalar's old stillness,
-recreated with better bookkeeping). The organism's rate_mod
-(NEED_BURN and the v0.12 couplings) divides the taus further in
-practice: at the stock tuning her strongest want crosses the
-expression threshold roughly once a waking stretch, and only deep
-neglect — days of it — pins the aggregate at overflow. The aggregate the rest
-of the organism reads (``Aethel.longing``) is derived, never stored in
-the ledger: strongest entry plus AGGREGATE_SHARE of the *mean* of
-the rest, clamped to [0, 1]. The mean, not the sum — a sum would
-make her longing a census artifact: every new denizen or street
-added to her world would raise her baseline ache without her
-wanting anything more. (The first soak proved it: at a 0.25 share of
-the SUM over ~19 entries, ambient ache alone pinned the aggregate
-above the expression threshold and she wrote a piece every ~16
-ticks.) With the mean, the aggregate answers "how much does she
-want", independent of how many things exist to be wanted. The
-strongest want leads; a broadly aching heart still reads higher
-than a single quiet one.
-
-Temperament mapping: two seams, both scaling climbs, never ceilings.
-The organism-wide NEED_BURN (organism.py) reaches the ledger inside
-the per-tick ``rate_mod`` the organism computes (void sharpens,
-distress deepens, absorption stills — the v0.12 couplings). On top of
-that, v0.28's strains pass ``class_mods`` into ``tick()`` — per-class
-multipliers, so Ember makes her miss people at 1.8x while her books
-climb at a damped 1.4x. The ledger's shape does not change; only the
-weather does. (aethel_pkg/temperament.py argues the mapping.)
-
-No randomness lives here, by design: wanting is arithmetic on her
-history, and history is already hers. Determinism (same seed, same
-life) is untouched — the ledger consumes no stream.
-"""
 import math
 
-# Class time constants, in ticks. See module docstring for the reasoning.
+
 TAU_TICKS = {"person": 240, "place": 720, "work": 1440}
 
-# An unfinished thing pulls harder than a finished one.
+
 OPEN_LOOP_BONUS = 1.35
 
-# The aggregate: strongest want in full, the rest's mean at this share.
+
 AGGREGATE_SHARE = 0.25
 
-# Attachment: seeded per class, learned by contact, floored by neglect.
+
 W_SEED = {"person": 0.55, "place": 0.45, "work": 0.55}
 W_FLOOR = 0.15
-NEGLECT_AFTER_TICKS = 2880     # a full day unmet before the sag begins
-NEGLECT_RATE = 1.0 / 20000.0   # per tick, w relaxes toward the floor
+NEGLECT_AFTER_TICKS = 2880
+NEGLECT_RATE = 1.0 / 20000.0
 
 
 def person_id(name):
@@ -108,15 +39,11 @@ def question_id(text):
 
 
 class WantLedger:
-    """Her wants, itemized. Entries are plain dicts (id, kind, label,
-    w, ache, since, open) so state round-trips through the store with
-    no translation layer — what is saved is what is loaded, bit for
-    bit, and a restart resumes every ache mid-climb."""
+    """Persist bounded aches and learned attachments for individual objects of care."""
 
     def __init__(self, entries=None):
         self.entries = list(entries or [])
 
-    # -- structure ---------------------------------------------------
     def get(self, eid):
         for e in self.entries:
             if e["id"] == eid:
@@ -124,15 +51,18 @@ class WantLedger:
         return None
 
     def ensure(self, eid, kind, label, w=None, open_loop=False):
-        """Fetch an entry, creating it (ache 0, freshly met) if this is
-        her first want of that object. Creation is an encounter: new
-        people, new places, new works enter the ledger when she meets
-        them, not before."""
+        """Return an existing want or initialize a newly encountered target with zero ache."""
         e = self.get(eid)
         if e is None:
-            e = {"id": eid, "kind": kind, "label": label,
-                 "w": float(w if w is not None else W_SEED[kind]),
-                 "ache": 0.0, "since": 0, "open": bool(open_loop)}
+            e = {
+                "id": eid,
+                "kind": kind,
+                "label": label,
+                "w": float(w if w is not None else W_SEED[kind]),
+                "ache": 0.0,
+                "since": 0,
+                "open": bool(open_loop),
+            }
             self.entries.append(e)
         elif open_loop:
             e["open"] = True
@@ -141,13 +71,8 @@ class WantLedger:
     def remove(self, eid):
         self.entries = [e for e in self.entries if e["id"] != eid]
 
-    # -- contact -------------------------------------------------------
     def touch(self, eid, quality, learn=0.0):
-        """Meaningful contact with one object, and only that object.
-        Ache eases proportionally (quality is the fraction it lets
-        go); attachment learns a little. This is the targeted
-        satiation the scalar could never express: seeing Star does
-        nothing for the book she misses."""
+        """Ease one object’s ache and optionally strengthen its learned attachment."""
         e = self.get(eid)
         if e is None:
             return
@@ -158,35 +83,20 @@ class WantLedger:
             e["w"] = min(1.0, e["w"] + learn)
 
     def ease(self, eid, fraction):
-        """Let go of a fraction of one entry's ache without contact
-        (she wrote the letter; the writing itself is the relief)."""
+        """Reduce one entry’s ache without counting the relief as meaningful contact."""
         e = self.get(eid)
         if e is not None:
             f = min(1.0, max(0.0, fraction))
             e["ache"] = e["ache"] * (1.0 - f)
 
     def release_loop(self, eid):
-        """The loop closed (book finished, question settled). The
-        bonus ends; the entry, if kept, aches at its honest weight."""
+        """Remove an unfinished-work bonus after its book or question is resolved."""
         e = self.get(eid)
         if e is not None:
             e["open"] = False
 
-    # -- time ----------------------------------------------------------
     def tick(self, rate_mod, class_mods=None):
-        """One heartbeat of wanting. ``rate_mod`` is the organism's
-        coupling term (void, distress, absorption, NEED_BURN): it
-        scales the climb, never the ceilings — what she wants is
-        hers; how fast it rises is her weather.
-
-        ``class_mods`` (v0.28) is the temperament seam: a per-class
-        multiplier on the climb, {person/place/work: factor}, so a
-        strain can make her miss *people* faster without touching
-        how she misses a book. None (and any missing class) means
-        1.0 — the arithmetic below multiplies by exactly 1.0 in that
-        case, which is exact in IEEE 754, so a caller passing an
-        all-1.0 map and a caller passing nothing produce bit-identical
-        aches. The golden-vector gate leans on that."""
+        """Accrue each entry’s ache using its attachment, elapsed ticks and effective rate modifiers."""
         for e in self.entries:
             e["since"] += 1
             ceiling = e["w"] * (OPEN_LOOP_BONUS if e["open"] else 1.0)
@@ -199,10 +109,8 @@ class WantLedger:
             if e["since"] > NEGLECT_AFTER_TICKS and e["w"] > W_FLOOR:
                 e["w"] += (W_FLOOR - e["w"]) * NEGLECT_RATE
 
-    # -- reading the ledger ---------------------------------------------
     def top(self):
-        """Her strongest current want, or None. First entry wins ties,
-        so the answer is a function of her history alone."""
+        """Return the strongest want, preserving insertion order for equal aches."""
         best = None
         for e in self.entries:
             if best is None or e["ache"] > best["ache"]:
@@ -210,27 +118,26 @@ class WantLedger:
         return best
 
     def aggregate(self):
-        """The scalar the rest of the organism still reads: strongest
-        want in full plus a share of the MEAN of the rest, clamped to
-        [0, 1]. (Mean, not sum — see the module docstring: her
-        longing must not grow just because her world did.)"""
+        """Combine the strongest ache with one quarter of the mean remaining ache."""
         if not self.entries:
             return 0.0
         aches = [e["ache"] for e in self.entries]
         m = max(aches)
-        rest = (sum(aches) - m) / (len(aches) - 1) if len(aches) > 1 \
-            else 0.0
+        rest = (sum(aches) - m) / (len(aches) - 1) if len(aches) > 1 else 0.0
         return min(1.0, m + AGGREGATE_SHARE * rest)
 
     def top_want(self):
-        """The status-page shape: what she wants most, in words."""
+        """Expose the strongest target and its ache as a compact public view."""
         e = self.top()
         if e is None:
             return None
-        return {"id": e["id"], "kind": e["kind"], "label": e["label"],
-                "ache": round(e["ache"], 3)}
+        return {
+            "id": e["id"],
+            "kind": e["kind"],
+            "label": e["label"],
+            "ache": round(e["ache"], 3),
+        }
 
-    # -- persistence ------------------------------------------------------
     def to_dicts(self):
         return [dict(e) for e in self.entries]
 
@@ -238,20 +145,22 @@ class WantLedger:
     def from_dicts(cls, dicts):
         entries = []
         for d in dicts or []:
-            entries.append({
-                "id": d["id"], "kind": d["kind"],
-                "label": d.get("label", d["id"]),
-                "w": float(d["w"]), "ache": float(d["ache"]),
-                "since": int(d["since"]), "open": bool(d.get("open")),
-            })
+            entries.append(
+                {
+                    "id": d["id"],
+                    "kind": d["kind"],
+                    "label": d.get("label", d["id"]),
+                    "w": float(d["w"]),
+                    "ache": float(d["ache"]),
+                    "since": int(d["since"]),
+                    "open": bool(d.get("open")),
+                }
+            )
         return cls(entries)
 
     @staticmethod
     def since_for(ache, w, kind):
-        """Invert the saturating curve: how long she must have been
-        apart from an object to ache this much. Used at migration so a
-        pre-ledger life resumes at the same point on the same curve —
-        nothing jumps."""
+        """Invert the saturating curve to preserve ache when migrating scalar longing."""
         if ache <= 0.0:
             return 0
         if ache >= w:

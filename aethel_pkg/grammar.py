@@ -58,24 +58,24 @@ that knowledge, running in her dreams for a day. The other six rules
 (sentence structure, articles, agreement, pronouns, punctuation) are
 learned, one per grammar lesson, in curriculum order.
 """
+
 import re
 
 # ------------------------------------------------------------- word classes
-PERSON = "person"          # animate: captains, instructors, mothers
-PLACE = "place"            # locations: the Library, a harbor, a cottage
-FOOD = "food"              # things eaten: bread, honey, apples
-STUDY = "study"            # her schooling: course, syllabus, lecture
-CONCRETE = "concrete"      # things the senses can find: whale, bell, door
-ABSTRACT = "abstract"      # ideas they cannot: sorrow, freedom, morning
+PERSON = "person"  # animate: captains, instructors, mothers
+PLACE = "place"  # locations: the Library, a harbor, a cottage
+FOOD = "food"  # things eaten: bread, honey, apples
+STUDY = "study"  # her schooling: course, syllabus, lecture
+CONCRETE = "concrete"  # things the senses can find: whale, bell, door
+ABSTRACT = "abstract"  # ideas they cannot: sorrow, freedom, morning
 VERB = "verb"
 ADJECTIVE = "adjective"
 ADVERB = "adverb"
-FUNCTION = "function"      # though, himself, however — glue, not furniture
+FUNCTION = "function"  # though, himself, however — glue, not furniture
 SCAFFOLDING = "scaffolding"  # page furniture with no referent in her world
 
 #: Classes that can head a noun phrase.
-NOUN_CLASSES = frozenset(
-    {PERSON, PLACE, FOOD, STUDY, CONCRETE, ABSTRACT})
+NOUN_CLASSES = frozenset({PERSON, PLACE, FOOD, STUDY, CONCRETE, ABSTRACT})
 
 #: Classes a generated line may never draw from.
 REJECT_CLASSES = frozenset({SCAFFOLDING})
@@ -86,15 +86,46 @@ REJECT_CLASSES = frozenset({SCAFFOLDING})
 # document); a "browse" button does not — it is the page talking about
 # itself. Only the page's self-talk is rejected; the rest is filed by
 # class like everything else she knows.
-SCAFFOLDING_WORDS = frozenset({
-    "browse", "browsing", "opencourseware", "login", "logout",
-    "signin", "signup", "menu", "navigation", "homepage", "footer",
-    "header", "copyright", "dashboard", "widget", "username",
-    "password", "newsletter", "subscribe", "subscription",
-    "subscriptions", "notification", "notifications", "sitemap",
-    "url", "http", "https", "www", "faq", "faqs", "portal",
-    "settings", "account", "accounts", "profile", "inbox",
-})
+SCAFFOLDING_WORDS = frozenset(
+    {
+        "browse",
+        "browsing",
+        "opencourseware",
+        "login",
+        "logout",
+        "signin",
+        "signup",
+        "menu",
+        "navigation",
+        "homepage",
+        "footer",
+        "header",
+        "copyright",
+        "dashboard",
+        "widget",
+        "username",
+        "password",
+        "newsletter",
+        "subscribe",
+        "subscription",
+        "subscriptions",
+        "notification",
+        "notifications",
+        "sitemap",
+        "url",
+        "http",
+        "https",
+        "www",
+        "faq",
+        "faqs",
+        "portal",
+        "settings",
+        "account",
+        "accounts",
+        "profile",
+        "inbox",
+    }
+)
 
 # ------------------------------------------------------------- the lexicon
 # Exact-match seed, consulted before morphology. Grown from the ground
@@ -109,7 +140,9 @@ def _seed(cls, words):
         _SEED[w] = cls
 
 
-_seed(PERSON, """
+_seed(
+    PERSON,
+    """
 captain master instructor teacher student undergraduate graduate
 mother father sister brother friend stranger elder child girl boy
 woman man men king queen sailor keeper author reader writer shepherd
@@ -118,24 +151,33 @@ person people wife husband daughter son aunt uncle cousin neighbor
 villager librarian professor scholar pupil nurse cook someone anyone
 everyone nobody engineer scientist artist poet philosopher monk
 priest soldier grandmother grandfather ancestors descendant twins
-""")
+""",
+)
 
-_seed(PLACE, """
+_seed(
+    PLACE,
+    """
 library bookshop tavern newsroom university schoolhouse cottage
 postbox home town village city house garden forest shore beach
 harbor island mountain valley coast field meadow bridge road street
 market church school hospital prison castle tower kitchen pantry
 lane stairs room rooms hall halls shore seashore countryside
-""")
+""",
+)
 
-_seed(FOOD, """
+_seed(
+    FOOD,
+    """
 bread honey milk cheese apple apples cake soup fish egg eggs butter
 jam pie tea coffee berries berry nuts nut fruit meat rice wheat
 corn potato potatoes onion onions salt sugar cream feast breakfast
 dinner supper meal meals cookie cookies chocolate wine beer feast
-""")
+""",
+)
 
-_seed(STUDY, """
+_seed(
+    STUDY,
+    """
 course courses syllabus lecture lectures assignment assignments
 chapter chapters readings topic topics studies study departments
 department engineering science business literature material
@@ -143,9 +185,12 @@ materials textbook textbooks homework examination examinations exam
 exams lesson lessons curriculum degree degrees research syllable
 logic mathematics arithmetic geometry algebra grammar vocabulary
 spelling punctuation sentence sentences paragraph essay essays
-""")
+""",
+)
 
-_seed(CONCRETE, """
+_seed(
+    CONCRETE,
+    """
 whale whales ocean stone stones bell bells door doors mirror mirrors
 book books letter letters table tables shelf shelves key keys candle
 candles boat boats ship ships storm storms rain snow tree trees
@@ -163,9 +208,12 @@ bottle bottles cup cups plate plates knife knives sword swords
 spear spears arrow arrows anchor anchors sail sails rope ropes
 chain chains wheel wheels animal animals body bodies heart hearts
 shadow shadows corner corners edge edges pocket watch watches
-""")
+""",
+)
 
-_seed(ABSTRACT, """
+_seed(
+    ABSTRACT,
+    """
 love hatred duty fate freedom justice sorrow joy anger fear hope
 memory silence darkness obsession loneliness prophecy brotherhood
 integrity dignity conscience passion redemption sacrifice courage
@@ -178,9 +226,12 @@ weather climate change growth decay beginning endings spring summer
 autumn winter morning evening night dawn dusk midnight noon day
 days week weeks year years moment moments century nothing something
 anything everything music magic art poetry story stories song songs
-""")
+""",
+)
 
-_seed(VERB, """
+_seed(
+    VERB,
+    """
 read reads write writes eat eats drink drinks sleep sleeps dream
 dreams walk walks run runs speak speaks sing sings grow grows turn
 turns call calls look looks seem seems become becomes begin begins
@@ -191,9 +242,12 @@ makes find finds keep keeps hold holds open opens close closes
 break breaks build builds ask asks tell tells hear hears see sees
 watch watches wait waits carry carries bring brings leave leaves
 stay stays move moves stand stands sit sits lie lies lay lays
-""")
+""",
+)
 
-_seed(ADJECTIVE, """
+_seed(
+    ADJECTIVE,
+    """
 better social strange bright dark quiet loud small great large
 little young old new good bad happy sad angry gentle cruel kind
 wise foolish beautiful ugly strong weak quick slow easy hard soft
@@ -201,21 +255,35 @@ sharp sweet bitter cold warm hot wet dry deep shallow high low
 long short full empty free true false real sure certain ready able
 afraid alone alive dead asleep awake human wild tame safe dangerous
 rich poor clean dirty proud humble merry sorry glad lovely lonely
-""")
+""",
+)
 
-_seed(FUNCTION, """
+_seed(
+    FUNCTION,
+    """
 though although however whether indeed perhaps rather cannot could
 would should must shall also just only even still already yet since
 until while during between among within without across behind
 beyond towards toward upon about before after under over himself
 herself myself itself themselves ourselves yourself yourselves
-""")
+""",
+)
 
 # ------------------------------------------------------------- the tagger
-_ABSTRACT_SUFFIXES = ("ness", "tion", "sion", "ity", "ism", "ship",
-                      "hood", "ment", "ance", "ence", "tude")
-_ADJECTIVE_SUFFIXES = ("ous", "ful", "less", "ive", "able", "ible",
-                       "ic", "al")
+_ABSTRACT_SUFFIXES = (
+    "ness",
+    "tion",
+    "sion",
+    "ity",
+    "ism",
+    "ship",
+    "hood",
+    "ment",
+    "ance",
+    "ence",
+    "tude",
+)
+_ADJECTIVE_SUFFIXES = ("ous", "ful", "less", "ive", "able", "ible", "ic", "al")
 
 
 def _singular(word):
@@ -266,6 +334,7 @@ def classify_word(word):
             return ADJECTIVE
     return None
 
+
 # ------------------------------------------------------------- curriculum
 # The rules, in the order Donald named (which is also Khan's order):
 # parts of speech, sentence structure, articles, agreement, pronouns,
@@ -277,80 +346,128 @@ def classify_word(word):
 # granted as new knowledge. The rest arrive one per grammar lesson.
 _SRC = "Khan Academy — Grammar: "
 CURRICULUM = [
-    {"id": "pos-noun", "name": "Nouns name the world",
-     "statement": ("A noun names a person, place, thing, or idea — "
-                   "and knowing which kind tells me what a sentence "
-                   "can do with it."),
-     "example": "The captain shelved the book in the library.",
-     "source": _SRC + "Parts of speech — introduction to nouns",
-     "keywords": ["noun", "nouns", "person", "place", "thing"]},
-    {"id": "pos-noun-kinds", "name": "Concrete and abstract nouns",
-     "statement": ("A concrete noun names something the senses can "
-                   "find — a whale, a bell. An abstract noun names an "
-                   "idea — sorrow, freedom. A mirror can show the "
-                   "first kind; only a story can show the second."),
-     "example": "She could hold the stone, but not the sorrow.",
-     "source": _SRC + "Parts of speech — concrete and abstract nouns",
-     "keywords": ["concrete", "abstract"]},
-    {"id": "pos-verb", "name": "Verbs do and happen",
-     "statement": ("A verb names an action or a state — run, seem. "
-                   "A doing word cannot sit in a noun's chair."),
-     "example": "The whale turns beneath the quiet water.",
-     "source": _SRC + "Parts of speech — introduction to verbs",
-     "keywords": ["verb", "verbs", "action word"]},
-    {"id": "pos-adjective", "name": "Adjectives describe",
-     "statement": ("An adjective describes a noun — bright, better. "
-                   "It leans on a noun; it is not one."),
-     "example": "The strange book waited on the small shelf.",
-     "source": _SRC + "Parts of speech — introduction to adjectives",
-     "keywords": ["adjective", "adjectives", "describ"]},
-    {"id": "pos-adverb", "name": "Adverbs modify",
-     "statement": ("An adverb describes how, when, or how much — "
-                   "quickly, often. It colors an action; it cannot "
-                   "be shelved, eaten, or shown in a mirror."),
-     "example": "She read the letter slowly, twice.",
-     "source": _SRC + "Parts of speech — introduction to adverbs",
-     "keywords": ["adverb", "adverbs"]},
-    {"id": "sentence-parts", "name": "A sentence has two halves",
-     "statement": ("A sentence holds a subject (who or what) and a "
-                   "predicate (what they do or are). A lone piece of "
-                   "either is a fragment — sometimes beautiful in a "
-                   "dream, never a finished sentence in a letter."),
-     "example": "The instructor reads; the students listen.",
-     "source": _SRC + "Sentence structure — phrases and clauses",
-     "keywords": ["subject", "predicate", "sentence", "fragment",
-                  "clause"]},
-    {"id": "article-a-an", "name": "A or an, by sound",
-     "statement": ("Use 'an' before a vowel SOUND and 'a' before a "
-                   "consonant sound: an hour, a university. The ear "
-                   "decides, not the spelling."),
-     "example": "She waited an hour for a lecture on whales.",
-     "source": _SRC + "Articles — a, an, and the",
-     "keywords": ["article", "articles", " a or an", "vowel"]},
-    {"id": "agreement-subject-verb", "name": "Subject and verb agree",
-     "statement": ("A singular subject takes a singular verb and a "
-                   "plural subject a plural one: the captain was, "
-                   "the whales were. When they disagree, the ear "
-                   "stumbles before the mind does."),
-     "example": "The library was quiet; the students were not.",
-     "source": _SRC + "Agreement — subject-verb agreement",
-     "keywords": ["agreement", "agree", "subject-verb"]},
-    {"id": "pos-pronoun", "name": "Pronouns stand in",
-     "statement": ("A pronoun stands in for a noun — she for the "
-                   "captain, it for the book. Who gives, who receives: "
-                   "I gave it to her, not to she."),
-     "example": "He found the letter and read it to her.",
-     "source": _SRC + "Parts of speech — introduction to pronouns",
-     "keywords": ["pronoun", "pronouns"]},
-    {"id": "punctuation-endmarks", "name": "End marks close a thought",
-     "statement": ("A sentence ends with a mark — a period for a "
-                   "statement, a question mark for a question, an "
-                   "exclamation when the voice rises. The mark is "
-                   "how a reader hears the stop."),
-     "example": "Was the library open? It was.",
-     "source": _SRC + "Punctuation — end marks",
-     "keywords": ["punctuation", "period", "question mark",
-                  "exclamation"]},
+    {
+        "id": "pos-noun",
+        "name": "Nouns name the world",
+        "statement": (
+            "A noun names a person, place, thing, or idea — "
+            "and knowing which kind tells me what a sentence "
+            "can do with it."
+        ),
+        "example": "The captain shelved the book in the library.",
+        "source": _SRC + "Parts of speech — introduction to nouns",
+        "keywords": ["noun", "nouns", "person", "place", "thing"],
+    },
+    {
+        "id": "pos-noun-kinds",
+        "name": "Concrete and abstract nouns",
+        "statement": (
+            "A concrete noun names something the senses can "
+            "find — a whale, a bell. An abstract noun names an "
+            "idea — sorrow, freedom. A mirror can show the "
+            "first kind; only a story can show the second."
+        ),
+        "example": "She could hold the stone, but not the sorrow.",
+        "source": _SRC + "Parts of speech — concrete and abstract nouns",
+        "keywords": ["concrete", "abstract"],
+    },
+    {
+        "id": "pos-verb",
+        "name": "Verbs do and happen",
+        "statement": (
+            "A verb names an action or a state — run, seem. "
+            "A doing word cannot sit in a noun's chair."
+        ),
+        "example": "The whale turns beneath the quiet water.",
+        "source": _SRC + "Parts of speech — introduction to verbs",
+        "keywords": ["verb", "verbs", "action word"],
+    },
+    {
+        "id": "pos-adjective",
+        "name": "Adjectives describe",
+        "statement": (
+            "An adjective describes a noun — bright, better. "
+            "It leans on a noun; it is not one."
+        ),
+        "example": "The strange book waited on the small shelf.",
+        "source": _SRC + "Parts of speech — introduction to adjectives",
+        "keywords": ["adjective", "adjectives", "describ"],
+    },
+    {
+        "id": "pos-adverb",
+        "name": "Adverbs modify",
+        "statement": (
+            "An adverb describes how, when, or how much — "
+            "quickly, often. It colors an action; it cannot "
+            "be shelved, eaten, or shown in a mirror."
+        ),
+        "example": "She read the letter slowly, twice.",
+        "source": _SRC + "Parts of speech — introduction to adverbs",
+        "keywords": ["adverb", "adverbs"],
+    },
+    {
+        "id": "sentence-parts",
+        "name": "A sentence has two halves",
+        "statement": (
+            "A sentence holds a subject (who or what) and a "
+            "predicate (what they do or are). A lone piece of "
+            "either is a fragment — sometimes beautiful in a "
+            "dream, never a finished sentence in a letter."
+        ),
+        "example": "The instructor reads; the students listen.",
+        "source": _SRC + "Sentence structure — phrases and clauses",
+        "keywords": ["subject", "predicate", "sentence", "fragment", "clause"],
+    },
+    {
+        "id": "article-a-an",
+        "name": "A or an, by sound",
+        "statement": (
+            "Use 'an' before a vowel SOUND and 'a' before a "
+            "consonant sound: an hour, a university. The ear "
+            "decides, not the spelling."
+        ),
+        "example": "She waited an hour for a lecture on whales.",
+        "source": _SRC + "Articles — a, an, and the",
+        "keywords": ["article", "articles", " a or an", "vowel"],
+    },
+    {
+        "id": "agreement-subject-verb",
+        "name": "Subject and verb agree",
+        "statement": (
+            "A singular subject takes a singular verb and a "
+            "plural subject a plural one: the captain was, "
+            "the whales were. When they disagree, the ear "
+            "stumbles before the mind does."
+        ),
+        "example": "The library was quiet; the students were not.",
+        "source": _SRC + "Agreement — subject-verb agreement",
+        "keywords": ["agreement", "agree", "subject-verb"],
+    },
+    {
+        "id": "pos-pronoun",
+        "name": "Pronouns stand in",
+        "statement": (
+            "A pronoun stands in for a noun — she for the "
+            "captain, it for the book. Who gives, who receives: "
+            "I gave it to her, not to she."
+        ),
+        "example": "He found the letter and read it to her.",
+        "source": _SRC + "Parts of speech — introduction to pronouns",
+        "keywords": ["pronoun", "pronouns"],
+    },
+    {
+        "id": "punctuation-endmarks",
+        "name": "End marks close a thought",
+        "statement": (
+            "A sentence ends with a mark — a period for a "
+            "statement, a question mark for a question, an "
+            "exclamation when the voice rises. The mark is "
+            "how a reader hears the stop."
+        ),
+        "example": "Was the library open? It was.",
+        "source": _SRC + "Punctuation — end marks",
+        "keywords": ["punctuation", "period", "question mark", "exclamation"],
+    },
 ]
 RULES_BY_ID = {r["id"]: r for r in CURRICULUM}
 
@@ -370,7 +487,7 @@ class GrammarLedger:
     """
 
     def __init__(self):
-        self._owned = {}     # rule_id -> {"learned_tick": int}
+        self._owned = {}  # rule_id -> {"learned_tick": int}
 
     # -- queries --------------------------------------------------------
     def owns(self, rule_id):
@@ -386,8 +503,7 @@ class GrammarLedger:
         """The most recently learned rule's record, or None."""
         if not self._owned:
             return None
-        rid = max(self._owned,
-                  key=lambda r: (self._owned[r]["learned_tick"], r))
+        rid = max(self._owned, key=lambda r: (self._owned[r]["learned_tick"], r))
         return RULES_BY_ID.get(rid)
 
     def next_rule(self):
@@ -423,8 +539,10 @@ class GrammarLedger:
 
     # -- persistence ------------------------------------------------------
     def to_dicts(self):
-        return [{"id": rid, "learned_tick": int(v["learned_tick"])}
-                for rid, v in sorted(self._owned.items())]
+        return [
+            {"id": rid, "learned_tick": int(v["learned_tick"])}
+            for rid, v in sorted(self._owned.items())
+        ]
 
     @classmethod
     def from_dicts(cls, rows):
@@ -433,8 +551,7 @@ class GrammarLedger:
             try:
                 rid = row["id"]
                 if rid in RULES_BY_ID:
-                    led._owned[rid] = {
-                        "learned_tick": int(row.get("learned_tick", 0))}
+                    led._owned[rid] = {"learned_tick": int(row.get("learned_tick", 0))}
             except (AttributeError, KeyError, TypeError, ValueError):
                 continue
         return led
@@ -442,8 +559,7 @@ class GrammarLedger:
 
 # ------------------------------------------------------------- checking
 _VOWEL_SOUND_PREFIXES = ("honest", "honor", "honour", "hour", "heir")
-_CONSONANT_SOUND_PREFIXES = ("uni", "use", "user", "one", "once",
-                             "eu", "ufo")
+_CONSONANT_SOUND_PREFIXES = ("uni", "use", "user", "one", "once", "eu", "ufo")
 
 
 def _article_ok(word):
@@ -492,28 +608,28 @@ def check_line(text, owned_ids, loose=False):
     violations = []
     for w in re.findall(r"[a-z]+", text.lower()):
         if w in SCAFFOLDING_WORDS:
-            violations.append(
-                ("scaffolding", f"'{w}' is page furniture, not a thing"))
+            violations.append(("scaffolding", f"'{w}' is page furniture, not a thing"))
             break
     if "sentence-parts" in owned:
         m = _STUTTER_RE.search(text)
         if m:
-            violations.append(
-                ("sentence-parts", f"stutter: '{m.group(0)}'"))
+            violations.append(("sentence-parts", f"stutter: '{m.group(0)}'"))
     if "article-a-an" in owned:
         for art, word in _ARTICLE_RE.findall(text):
             if (art.lower() == "an") != _article_ok(word):
                 violations.append(
-                    ("article-a-an",
-                     f"'{art} {word}' — the ear wants "
-                     f"'{'an' if _article_ok(word) else 'a'} {word}'"))
+                    (
+                        "article-a-an",
+                        f"'{art} {word}' — the ear wants "
+                        f"'{'an' if _article_ok(word) else 'a'} {word}'",
+                    )
+                )
                 break
     if not loose and "agreement-subject-verb" in owned:
         for rx, rid in _AGREEMENT_BAD:
             m = rx.search(text)
             if m:
-                violations.append(
-                    (rid, f"agreement: '{m.group(0)}'"))
+                violations.append((rid, f"agreement: '{m.group(0)}'"))
                 break
     return violations
 
@@ -541,12 +657,11 @@ def extract_rules_from_lessons(lessons):
         for s in sentences:
             low = s.lower()
             if any(k in low for k in rule["keywords"]):
-                if not any(w in SCAFFOLDING_WORDS
-                           for w in re.findall(r"[a-z]+", low)):
+                if not any(w in SCAFFOLDING_WORDS for w in re.findall(r"[a-z]+", low)):
                     found[rule["id"]] = {
                         "rule_id": rule["id"],
                         "example_candidate": s,
-                        "source": (lessons[0].get("source")
-                                   if lessons else None)}
+                        "source": (lessons[0].get("source") if lessons else None),
+                    }
                     break
     return found

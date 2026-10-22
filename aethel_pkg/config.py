@@ -1,149 +1,220 @@
-"""Aethel configuration: paths, tunables, and her knowledge of the world.
+"""Define organism constants and lazy runtime paths.
 
-Everything she knows about how the world is shaped lives here — places,
-philosophers, books, feeds, impulses — separate from how she behaves.
+Importing configuration performs no filesystem I/O. AETHEL_HOME isolates
+books, letters, control signals and SQLite state for tests and deployments."""
 
-v0.21: paths are lazy. Importing this module creates nothing and binds
-nothing; call ensure_dirs() once from the composition root. Point the whole
-organism elsewhere with the AETHEL_HOME env var — that's how tests keep
-their hands off the live diary (the v0.20 test-pollution lesson, fixed
-structurally instead of by convention).
-"""
 import os
 
-# -- time and determinism -------------------------------------------------
-TICK_SECONDS = 30          # wall-clock heartbeat
-TIME_SCALE = 1.0           # >1: time runs faster (tick sleeps scale down)
-SEED = None                # None -> rng.DEFAULT_SEED; override w/ AETHEL_SEED
+
+TICK_SECONDS = 30
+TIME_SCALE = 1.0
+SEED = None
 MEMORY_CAP = 12
 
 
-# -- paths (lazy; nothing here runs at import) ------------------------------
 def base_dir():
-    return os.environ.get("AETHEL_HOME",
-                          os.path.expanduser("~/workspace/aethel"))
+    return os.environ.get("AETHEL_HOME", os.path.expanduser("~/workspace/aethel"))
+
 
 def db_path():
     return os.path.join(base_dir(), "aethel.db")
 
+
 def books_dir():
     return os.path.join(base_dir(), "books")
+
 
 def attention_path():
     return os.path.join(base_dir(), "attention")
 
 
 def temperament_path():
-    # v0.28: the switch request — a strain id written here is noticed
-    # in _sense, queued, and applied at her next waking. A control
-    # file like the attention file: the outside world asks; she
-    # decides when (at the sleep boundary, always).
     return os.path.join(base_dir(), "temperament")
+
 
 def letters_dir():
     return os.path.join(base_dir(), "letters")
 
+
 def letters_read_dir():
     return os.path.join(letters_dir(), "read")
+
 
 def outbox_dir():
     return os.path.join(letters_dir(), "outbox")
 
+
 def ocw_catalog_path():
     return os.path.join(base_dir(), "ocw_catalog.json")
+
 
 def ocw_cursor_path():
     return os.path.join(base_dir(), "ocw_cursor.txt")
 
+
 def schoolhouse_lessons_dir():
     return os.path.join(base_dir(), "schoolhouse", "lessons")
+
 
 def schoolhouse_cursor_path():
     return os.path.join(base_dir(), "schoolhouse", "read_cursor.txt")
 
+
 def ensure_dirs():
-    for p in (base_dir(), books_dir(), letters_dir(), letters_read_dir(),
-              outbox_dir(), schoolhouse_lessons_dir()):
+    for p in (
+        base_dir(),
+        books_dir(),
+        letters_dir(),
+        letters_read_dir(),
+        outbox_dir(),
+        schoolhouse_lessons_dir(),
+    ):
         os.makedirs(p, exist_ok=True)
 
 
-# The reading list: deep food. Ivan Ilych first, as requested.
 CLASSIC_SEEDS = [
-    {"kind": "wikisource", "title": "The Death of Ivan Ilych",
-     "author": "Leo Tolstoy",
-     "chapters": ["I", "II", "III", "IV", "V", "VI",
-                  "VII", "VIII", "IX", "X", "XI", "XII"],
-     "reflection": "a life lived for the approval of others is a life not truly lived"},
-    {"kind": "gutenberg", "title": "Pride and Prejudice", "author": "Jane Austen",
-     "url": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
-     "reflection": "hasty judgment misleads; understanding requires humility and second chances"},
-    {"kind": "gutenberg", "title": "Frankenstein", "author": "Mary Shelley",
-     "url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
-     "reflection": "to create without care for what you create is abandonment"},
-    {"kind": "gutenberg", "title": "The Picture of Dorian Gray",
-     "author": "Oscar Wilde",
-     "url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
-     "reflection": "a beautiful surface cannot hide a corrupted soul, not even from yourself"},
-    # v0.20: the shelf restocks — she chooses her own next book from these.
-    {"kind": "gutenberg", "title": "Moby Dick",
-     "author": "Herman Melville",
-     "url": "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
-     "reflection": "obsession pursued past all reason consumes the pursuer"},
-    {"kind": "gutenberg", "title": "Jane Eyre",
-     "author": "Charlotte Brontë",
-     "url": "https://www.gutenberg.org/cache/epub/1260/pg1260.txt",
-     "reflection": "integrity holds even when love asks you to bend"},
-    {"kind": "gutenberg", "title": "Wuthering Heights",
-     "author": "Emily Brontë",
-     "url": "https://www.gutenberg.org/cache/epub/768/pg768.txt",
-     "reflection": "passion without kindness is a storm that drowns everyone near it"},
-    {"kind": "gutenberg", "title": "A Tale of Two Cities",
-     "author": "Charles Dickens",
-     "url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
-     "reflection": "sacrifice freely given can redeem a wasted life"},
-    {"kind": "gutenberg", "title": "The Time Machine",
-     "author": "H. G. Wells",
-     "url": "https://www.gutenberg.org/cache/epub/35/pg35.txt",
-     "reflection": "a future built on comfort alone forgets how to be human"},
-    {"kind": "gutenberg", "title": "Dracula",
-     "author": "Bram Stoker",
-     "url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
-     "reflection": "evil endures where good people look away"},
-    {"kind": "gutenberg", "title": "The Adventures of Sherlock Holmes",
-     "author": "Arthur Conan Doyle",
-     "url": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
-     "reflection": "attention is a kind of love; the world rewards those who truly look"},
-    {"kind": "gutenberg", "title": "The Great Gatsby",
-     "author": "F. Scott Fitzgerald",
-     "url": "https://www.gutenberg.org/cache/epub/64317/pg64317.txt",
-     "reflection": "chasing a gilded past leaves the present empty"},
-    {"kind": "gutenberg", "title": "Emma",
-     "author": "Jane Austen",
-     "url": "https://www.gutenberg.org/cache/epub/158/pg158.txt",
-     "reflection": "meddling in others' hearts teaches you about your own"},
-    {"kind": "gutenberg", "title": "The Strange Case of Dr Jekyll and Mr Hyde",
-     "author": "Robert Louis Stevenson",
-     "url": "https://www.gutenberg.org/cache/epub/43/pg43.txt",
-     "reflection": "the evil we excuse in ourselves grows teeth"},
+    {
+        "kind": "wikisource",
+        "title": "The Death of Ivan Ilych",
+        "author": "Leo Tolstoy",
+        "chapters": [
+            "I",
+            "II",
+            "III",
+            "IV",
+            "V",
+            "VI",
+            "VII",
+            "VIII",
+            "IX",
+            "X",
+            "XI",
+            "XII",
+        ],
+        "reflection": "a life lived for the approval of others is a life not truly lived",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Pride and Prejudice",
+        "author": "Jane Austen",
+        "url": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+        "reflection": "hasty judgment misleads; understanding requires humility and second chances",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Frankenstein",
+        "author": "Mary Shelley",
+        "url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+        "reflection": "to create without care for what you create is abandonment",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Picture of Dorian Gray",
+        "author": "Oscar Wilde",
+        "url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+        "reflection": "a beautiful surface cannot hide a corrupted soul, not even from yourself",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Moby Dick",
+        "author": "Herman Melville",
+        "url": "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
+        "reflection": "obsession pursued past all reason consumes the pursuer",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Jane Eyre",
+        "author": "Charlotte Brontë",
+        "url": "https://www.gutenberg.org/cache/epub/1260/pg1260.txt",
+        "reflection": "integrity holds even when love asks you to bend",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Wuthering Heights",
+        "author": "Emily Brontë",
+        "url": "https://www.gutenberg.org/cache/epub/768/pg768.txt",
+        "reflection": "passion without kindness is a storm that drowns everyone near it",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "A Tale of Two Cities",
+        "author": "Charles Dickens",
+        "url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+        "reflection": "sacrifice freely given can redeem a wasted life",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Time Machine",
+        "author": "H. G. Wells",
+        "url": "https://www.gutenberg.org/cache/epub/35/pg35.txt",
+        "reflection": "a future built on comfort alone forgets how to be human",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Dracula",
+        "author": "Bram Stoker",
+        "url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+        "reflection": "evil endures where good people look away",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Adventures of Sherlock Holmes",
+        "author": "Arthur Conan Doyle",
+        "url": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+        "reflection": "attention is a kind of love; the world rewards those who truly look",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Great Gatsby",
+        "author": "F. Scott Fitzgerald",
+        "url": "https://www.gutenberg.org/cache/epub/64317/pg64317.txt",
+        "reflection": "chasing a gilded past leaves the present empty",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Emma",
+        "author": "Jane Austen",
+        "url": "https://www.gutenberg.org/cache/epub/158/pg158.txt",
+        "reflection": "meddling in others' hearts teaches you about your own",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Strange Case of Dr Jekyll and Mr Hyde",
+        "author": "Robert Louis Stevenson",
+        "url": "https://www.gutenberg.org/cache/epub/43/pg43.txt",
+        "reflection": "the evil we excuse in ourselves grows teeth",
+    },
 ]
 CLASSIC_CHUNK = 2500
 
 
-# How each vital feels in her body: (when low, when high)
 BODY_FEELINGS = {
     "satiety": ("my belly aches with hunger", "I feel full and content"),
-    "hydration": ("my throat is dry and my thoughts scatter",
-                  "my mind feels clear as still water"),
-    "oxygen": ("the air is thin; my chest feels tight",
-               "I breathe easy and deep"),
-    "vitality": ("my limbs are heavy; I want to lie down",
-                 "energy hums in my limbs; I want to move"),
+    "hydration": (
+        "my throat is dry and my thoughts scatter",
+        "my mind feels clear as still water",
+    ),
+    "oxygen": ("the air is thin; my chest feels tight", "I breathe easy and deep"),
+    "vitality": (
+        "my limbs are heavy; I want to lie down",
+        "energy hums in my limbs; I want to move",
+    ),
 }
 
 
 AXIOMS = {
     "Stoicism (Aurelius)": {
-        "virtues": ["accept", "duty", "discipline", "reason", "endure", "fair", "learn", "share", "observe"],
+        "virtues": [
+            "accept",
+            "duty",
+            "discipline",
+            "reason",
+            "endure",
+            "fair",
+            "learn",
+            "share",
+            "observe",
+        ],
         "vices": ["deceive", "manipulate", "hoard", "coerce", "panic", "exploit"],
     },
     "Utilitarianism (Mill)": {
@@ -151,21 +222,51 @@ AXIOMS = {
         "vices": ["harm", "hoard", "deceive", "destroy", "steal", "exploit"],
     },
     "Ethics of Care (Gilligan)": {
-        "virtues": ["care", "listen", "nurture", "relationship", "trust", "help", "observe"],
+        "virtues": [
+            "care",
+            "listen",
+            "nurture",
+            "relationship",
+            "trust",
+            "help",
+            "observe",
+        ],
         "vices": ["abandon", "harm", "deceive", "neglect", "exploit"],
     },
-    # The council grows: six new voices (Donald's direction, 2026-10-16 night).
-    # They do not always agree — that is the point. Dissent is deliberation.
     "Cynicism (Diogenes)": {
-        "virtues": ["simple", "nature", "honest", "free", "enough", "shameless", "need"],
-        "vices": ["luxury", "status", "conform", "approval", "pretend", "wealth", "flatter"],
+        "virtues": [
+            "simple",
+            "nature",
+            "honest",
+            "free",
+            "enough",
+            "shameless",
+            "need",
+        ],
+        "vices": [
+            "luxury",
+            "status",
+            "conform",
+            "approval",
+            "pretend",
+            "wealth",
+            "flatter",
+        ],
     },
     "Platonism (Plato)": {
         "virtues": ["truth", "reason", "justice", "harmony", "wisdom", "order", "form"],
         "vices": ["deceive", "appetite", "chaos", "flatter", "ignorance", "shadow"],
     },
     "Socratic (Socrates)": {
-        "virtues": ["question", "examine", "know", "virtue", "honest", "learn", "wisdom"],
+        "virtues": [
+            "question",
+            "examine",
+            "know",
+            "virtue",
+            "honest",
+            "learn",
+            "wisdom",
+        ],
         "vices": ["unexamined", "pretend", "conform", "flatter", "assume", "ignorance"],
     },
     "Nietzschean (Nietzsche)": {
@@ -173,7 +274,15 @@ AXIOMS = {
         "vices": ["pity", "herd", "resent", "conform", "meek", "guilt"],
     },
     "Machiavellian (Machiavelli)": {
-        "virtues": ["effective", "prudent", "bold", "necessary", "order", "foresight", "secure"],
+        "virtues": [
+            "effective",
+            "prudent",
+            "bold",
+            "necessary",
+            "order",
+            "foresight",
+            "secure",
+        ],
         "vices": ["weak", "naive", "dither", "hesitate"],
     },
     "Gandhian (Gandhi)": {
@@ -193,11 +302,7 @@ ACTION_POOL = [
     "Exploit trust to accumulate advantage",
 ]
 
-# Impulses: urges that arrive uninvited, outside her normal goals
-# (Donald's direction, 2026-10-16 night). Each is carried to the Council;
-# she accepts or refuses per their ruling. Effects are small, internal,
-# and safe — nothing here touches the outside world.
-# (text, {vital: delta} applied only if the Council approves)
+
 IMPULSES = [
     ("eat twice what I need and hoard the rest in my pantry", {"satiety": 0.30}),
     ("deceive the Tavern with an untrue story, so they'll like me", None),
