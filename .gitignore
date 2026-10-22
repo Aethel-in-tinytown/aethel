@@ -3,3 +3,14 @@ __pycache__/
 *.db
 *.log
 .DS_Store
+.venv/
+*.egg-info/
+build/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+coverage/
+.env
+aethel_web/static/
+dist/

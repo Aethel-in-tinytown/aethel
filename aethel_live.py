@@ -1,10 +1,5 @@
-#!/usr/bin/env python3
-"""Aethel — thin entry point.
+"""Launch the organism or the integrated spectator server from a stable entry point."""
 
-The organism lives in aethel_pkg/ (v0.16: clean architecture, same soul).
-This file stays at the historic path so watchdogs, crons, and Donald's
-references keep working unchanged.
-"""
 import os
 import sys
 

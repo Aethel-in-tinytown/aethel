@@ -1,37 +1,16 @@
-"""Markov machinery for the town. Pure stdlib — the matrices are small
-(the town has a dozen places), so numpy would buy nothing and cost the
-sandbox law.
+"""Build and inspect resident transition probabilities without changing town state.
 
-A resident's movement IS a Markov chain over places; v0.21 makes the
-matrices explicit instead of hiding them in if/else:
+Stationary distributions are operator diagnostics, not organism knowledge."""
 
-- `base_matrix(denizen)` — the personality chain: where a resident drifts
-  when no need presses. Row-stochastic by construction.
-- `stationary(P)` — the long-run distribution over places, by power
-  iteration. This is the town's ground truth for "who haunts where" —
-  a diagnostic (see Town.diagnostics), never shown to her. Her
-  `impressions` are her own estimate of this same distribution; how
-  close the two are is, quite literally, how well she knows her town.
-
-Need-driven movement (tired → home, hungry → the Tavern, lonely → the
-crowd) is a *state-dependent* chain: residents.py builds the effective
-transition row each turn from the base row plus the current need state,
-then samples it with the town's deterministic rng.
-"""
 from .places import PLACES
 
-# Places a resident can physically occupy (their homes are place keys).
-STATE_SPACE = sorted(set(PLACES) - {"memory"})  # her pantry is hers alone
+
+STATE_SPACE = sorted(set(PLACES) - {"memory"})
 _INDEX = {p: i for i, p in enumerate(STATE_SPACE)}
 
 
 def base_matrix(denizen):
-    """The personality chain: P[next | current] when no need is pressing.
-
-    From anywhere: mostly stay put; with probability `wander`, drift to
-    one of the resident's hangouts (uniform) or home (half a hangout's
-    pull — home is where rest happens, driven by needs, not drift).
-    """
+    """Construct the personality-only transition matrix without need overrides."""
     n = len(STATE_SPACE)
     P = [[0.0] * n for _ in range(n)]
     hangouts = [h for h in denizen.hangouts if h in _INDEX]
@@ -47,7 +26,7 @@ def base_matrix(denizen):
 
 
 def stationary(P, iters=2000, tol=1e-12):
-    """Long-run distribution of a row-stochastic matrix (power iteration)."""
+    """Estimate a row-stochastic matrix’s stationary distribution by power iteration."""
     n = len(P)
     pi = [1.0 / n] * n
     for _ in range(iters):
@@ -60,7 +39,7 @@ def stationary(P, iters=2000, tol=1e-12):
 
 
 def normalize(options_weights):
-    """[(option, weight)] -> probability row summing to 1 (drops zeros)."""
+    """Discard zero weights and normalize remaining choices into a probability row."""
     total = sum(w for _, w in options_weights)
     if total <= 0:
         return [(o, 1.0 / len(options_weights)) for o, _ in options_weights]

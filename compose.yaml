@@ -1,0 +1,16 @@
+services:
+  aethel:
+    build: .
+    init: true
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+    environment:
+      AETHEL_OWNER_TOKEN: ${AETHEL_OWNER_TOKEN:-}
+      AETHEL_PUBLIC_ORIGIN: ${AETHEL_PUBLIC_ORIGIN:-}
+    volumes:
+      - aethel-data:/data
+    restart: unless-stopped
+    stop_grace_period: 15s
+volumes:
+  aethel-data:
