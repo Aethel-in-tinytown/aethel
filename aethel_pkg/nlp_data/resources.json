@@ -1,0 +1,52 @@
+{
+  "revision": "550b6625bcef1f2abff2ff770a5a0d272c9c6b2a",
+  "resources": {
+    "averaged_perceptron_tagger_eng": {
+      "sha256": "6025f530624335c67d6547d44757b357b4e79bae030a0383e9887a92c1718f0b",
+      "url": "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/taggers/averaged_perceptron_tagger_eng.zip",
+      "subdir": "taggers",
+      "files": {
+        "taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.weights.json": "789e8e35f6fac656d9b7eccea29ba4e8a137cbb5b525dd31f39e4291a9e80832",
+        "taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.classes.json": "d152ffa69d45b8357276341a3d592c6c025911d52ec0d9068d4f382560dd48b6",
+        "taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.tagdict.json": "4c713731cb06727736962bc8cd94ad919217a040e76691059af99bc0c2c9c246"
+      }
+    },
+    "punkt_tab": {
+      "sha256": "e57f64187974277726a3417ca6f181ec5403676c717672eef6a748a7b20e0106",
+      "url": "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/tokenizers/punkt_tab.zip",
+      "subdir": "tokenizers",
+      "files": {
+        "tokenizers/punkt_tab/english/collocations.tab": "8e2da1225e4dd2cc9dba261ee231ccb134859e21b46006e7f472c5ee269af0cf",
+        "tokenizers/punkt_tab/english/sent_starters.txt": "f3f8535483e1dba487241b764945168123bca3209a9645e59acd1225dc76edac",
+        "tokenizers/punkt_tab/english/abbrev_types.txt": "92a3e070f43d9b4c5534758ca40ad7343b04e7e29bfe0c2eb658a39445a4f779",
+        "tokenizers/punkt_tab/english/ortho_context.tab": "4bbcca25ed3d3f06c02402abf8419b9f033b8adc06e7b482eca4e45f81a5dc4c",
+        "tokenizers/punkt_tab/README": "d3251cae66a9359bd68c039e3a46172a05ca9df0b27dcdfa23ae594d68d27ec4"
+      }
+    },
+    "wordnet": {
+      "sha256": "cbda5ea6eef7f36a97a43d4a75f85e07fccbb4f23657d27b4ccbc93e2646ab59",
+      "url": "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/corpora/wordnet.zip",
+      "subdir": "corpora",
+      "files": {
+        "corpora/wordnet/lexnames": "4767e2a1c6e68c1a93aa6b7c4ef7ebe9a815b50d7d5aac2788696f2cf3633bf1",
+        "corpora/wordnet/data.verb": "29cc96ed80c9f47d94fe75e332a9df80f4b1c737205f92d2f433d63c6da2ab51",
+        "corpora/wordnet/index.adv": "6f5465ed5758fe9c8a2f7ec17b1300f3aa875756c70ff7cba162f7e71bcf88ea",
+        "corpora/wordnet/adv.exc": "e7291461b629abfe63301bbe1998cee09fd575ed7107abd7ea9763adb05bf0a8",
+        "corpora/wordnet/index.verb": "c7c79b558d787f1e31c6f8b3eeadb8fcbb26a64545ecc1241e21d9b61f95ee8e",
+        "corpora/wordnet/cntlist.rev": "a198580b8f705fa02797bba8b13e5cbe4a9f9f40cb1697e774c7fc6a5865b035",
+        "corpora/wordnet/data.adj": "f24b635368be441501c9b8001e9271fd3b30b203f00d91e332979e6f8fe35646",
+        "corpora/wordnet/index.adj": "42f58dda2c7cff66eb8fa55ba62e0a873a9b3f43c878e8201108f5dab6dcff28",
+        "corpora/wordnet/LICENSE": "7731175a77952e259390b496fab905e57118b8d19ad3a8383c67eee724ff443f",
+        "corpora/wordnet/citation.bib": "cd931cfe73536463c1decce60005a55d6b0c605fc7c5f89aaff7a38b5aedfa79",
+        "corpora/wordnet/noun.exc": "2b5d675c380b39ecf595af9fa9d4e7feb1d58c643b0bff08c40ed5bfe41fab7a",
+        "corpora/wordnet/verb.exc": "dbbcf9a601b2d77e934e413b91d90e88ec7f933a8b77cfc00602a923b891b42c",
+        "corpora/wordnet/README": "adad8d28ddea1db05b67ba1ac23506b025d29e0bcbf23bb35dde346089d8808d",
+        "corpora/wordnet/index.sense": "68b3a468cddfd8e92134b9b0624339a02a1b837159243c297c5f138a3d618392",
+        "corpora/wordnet/data.noun": "489f145e0f68877c0be5bd0eb4117adaaac52f38f6204eb8d85dbe2158b614cc",
+        "corpora/wordnet/data.adv": "e66dbbda0e0359e41b7f225bff71dd0c263dc7c66c1b61abc9ba334973d92979",
+        "corpora/wordnet/index.noun": "a490d99d93d017bf4822fe2f0ffa51fd73911ce271dc7535fade21f8814b5a04",
+        "corpora/wordnet/adj.exc": "8824cc24bbedd797b9702316b27f07cd4c2b76b629539f0a1276f03926758016"
+      }
+    }
+  }
+}

@@ -100,6 +100,7 @@ def build_snapshot(organism, town, store, revision):
         "status": {
             "tick": organism.tick_count,
             "version": "v" + VERSION,
+            "language": organism.language.metadata,
             "alive": True,
             "stale": False,
             "vitals": vitals,

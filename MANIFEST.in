@@ -1,3 +1,4 @@
 include README.md CHANGELOG.md
 recursive-include docs *.md
+recursive-include aethel_pkg/nlp_data *.json *.txt *.md
 recursive-include aethel_web/static *

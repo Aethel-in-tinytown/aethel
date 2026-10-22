@@ -26,6 +26,7 @@ from .forage import (
     wikisource_chapter,
 )
 from .journal import get_store, journal, now_iso
+from .language import HeuristicLanguage, select_language
 from . import grammar as _grammar
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
@@ -62,7 +63,7 @@ class Aethel:
         "memory": "my own pantry",
     }
 
-    def __init__(self, world, parents=(), seed=None):
+    def __init__(self, world, parents=(), seed=None, language_backend=None):
         """Construct state with injected world, store and seeded randomness; restore persisted values when available."""
         if not isinstance(world, World):
             raise TypeError("Aethel needs a World, not a town.")
@@ -70,6 +71,8 @@ class Aethel:
         self.parents = set(parents)
         # Continuing a life preserves its root seed, including newly named streams.
         saved = get_store().load_blob("state") or {}
+        # Fail before restoration can journal or consume any seeded randomness.
+        self.language = select_language(saved, language_backend)
         if isinstance(saved.get("seed"), int):
             seed = saved["seed"]
         if seed is None:
@@ -182,6 +185,7 @@ class Aethel:
             self._grammar_ledger = _grammar.GrammarLedger()
             self._grammar_ledger.migrate(self.tick_count)
         self._word_tags = dict(getattr(self, "_loaded_word_tags", None) or {})
+        self._init_language_knowledge(saved)
         if not hasattr(self, "_grammar_caught_day"):
             self._grammar_caught_day = -1
             self._grammar_caught_count = 0
@@ -191,6 +195,8 @@ class Aethel:
             "state",
             {
                 "seed": self.seed,
+                "language": getattr(self, "language", HeuristicLanguage()).metadata,
+                **({"lemma_index": self.lemma_index} if self._nlp else {}),
                 "rng_streams": self.streams.dump(),
                 "vitals": self.vitals,
                 "memory": self.memory[-MEMORY_CAP:],
@@ -398,6 +404,78 @@ class Aethel:
         print(f'Aethel: "{text}"', flush=True)
         journal("experience", n=self.tick_count, text=text)
 
+    @property
+    def _nlp(self):
+        return getattr(getattr(self, "language", None), "name", "heuristic") == "nltk"
+
+    def _concept_counts(self):
+        """Canonical counts in NLTK mode; surface counts remain historical data."""
+        if not self._nlp:
+            return self.concepts
+        return {
+            lemma: sum(aliases.values()) for lemma, aliases in self.lemma_index.items()
+        }
+
+    def _canonical(self, word):
+        if not self._nlp:
+            return word
+        word = word.lower()
+        if word in self.lemma_index:
+            return word
+        choices = [
+            (aliases[word], lemma)
+            for lemma, aliases in self.lemma_index.items()
+            if word in aliases
+        ]
+        if choices:
+            return max(choices, key=lambda pair: pair[0])[1]
+        return word
+
+    def _normalized(self, text):
+        # Contextual token lemmas take priority over an ambiguous surface alias.
+        return {
+            w if w in self.lemma_index else self._canonical(w)
+            for w in self.language.normalized(text)
+        }
+
+    def _init_language_knowledge(self, saved):
+        """Activate canonical knowledge without rewriting history or goal growth."""
+        previous = (saved.get("language") or {}).get("backend", "heuristic")
+        if not self._nlp:
+            if previous == "nltk":
+                index = saved.get("lemma_index", {})
+                for goal in self.goals:
+                    lemma = goal.pop("lemma_term", goal["term"])
+                    baseline = goal.pop("lemma_start_count", goal["start_count"])
+                    grown = sum(index.get(lemma, {}).values()) - baseline
+                    goal["start_count"] = self.concepts.get(goal["term"], 0) - grown
+                self.cooc = {}  # Canonical edges have no unambiguous surface inverse.
+            return
+        if previous == "nltk" and "lemma_index" in saved:
+            self.lemma_index = saved["lemma_index"]
+            return
+        self.lemma_index = {}
+        pos_for_class = {"verb": "VB", "adjective": "JJ", "adverb": "RB"}
+        for surface, count in self.concepts.items():
+            cls = (self._word_tags.get(surface) or {}).get("c")
+            lemma = self.language.lemma(surface, pos_for_class.get(cls, "NN"))
+            self.lemma_index.setdefault(lemma, {})[surface] = count
+        counts = self._concept_counts()
+        for goal in self.goals:
+            lemma = self._canonical(goal["term"])
+            grown = self.concepts.get(goal["term"], 0) - goal["start_count"]
+            goal["lemma_term"] = lemma
+            goal["lemma_start_count"] = counts.get(lemma, 0) - grown
+        canonical_cooc = {}
+        for a, row in self.cooc.items():
+            a = self._canonical(a)
+            for b, count in row.items():
+                b = self._canonical(b)
+                if a != b:
+                    out = canonical_cooc.setdefault(a, {})
+                    out[b] = out.get(b, 0) + count
+        self.cooc = canonical_cooc
+
     SLEEP_EVERY_TICKS = 120
     SLEEP_LENGTH_TICKS = 20
 
@@ -461,7 +539,7 @@ class Aethel:
         """Update the bounded concept co-occurrence graph from one meal."""
         top = set(
             w
-            for w, _ in sorted(self.concepts.items(), key=lambda kv: -kv[1])[
+            for w, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
                 : self.COOC_CONCEPT_CAP
             ]
         )
@@ -503,7 +581,8 @@ class Aethel:
     def _dream_pair(self, words):
         """Sample related concepts using the dedicated dream stream."""
         pool = set(words)
-        weights = [self.concepts.get(w, 1) ** 0.5 for w in words]
+        counts = self._concept_counts()
+        weights = [counts.get(w, 1) ** 0.5 for w in words]
         c1 = self.rng_dreams.weighted_choice(words, weights)
         c2 = None
         for _ in range(self.DREAM_GIBBS_STEPS):
@@ -671,7 +750,9 @@ class Aethel:
         safest frame takes the night."""
         raw = [
             w
-            for w, _ in sorted(self.concepts.items(), key=lambda kv: -kv[1])[:40]
+            for w, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
+                :40
+            ]
             if len(w) > 4 and w not in STOPWORDS
         ]
         words = [w for w in raw if self._dream_word_ok(w)]
@@ -879,7 +960,7 @@ class Aethel:
             words = [
                 w
                 for w in re.findall(r"[a-z]{4,}", dream_text.lower())
-                if w in self.concepts and w not in STOPWORDS
+                if w in self._concept_counts() and w not in STOPWORDS
             ]
             seen = set()
             cw = [w for w in words if not (w in seen or seen.add(w))]
@@ -1468,7 +1549,13 @@ class Aethel:
         self.meals_eaten += 1
 
         new_terms = 0
-        words = re.findall(r"[a-z]{6,}", text.lower())
+        analysis = self.language.analyze(text) if self._nlp else None
+        tokens = (
+            [t for t in analysis.tokens if self.language.content(t)]
+            if analysis
+            else None
+        )
+        words = tokens if self._nlp else re.findall(r"[a-z]{6,}", text.lower())
         if self.sleep_pressure > 0.9:
             self.rng_forage.shuffle(words)
             words = words[len(words) // 2 :]
@@ -1476,23 +1563,41 @@ class Aethel:
                 "[overtired] too tired to retain — half the meal slips away", flush=True
             )
             journal("overtired", n=self.tick_count)
-        for w in words:
-            if w not in STOPWORDS:
-                if w not in self.concepts:
+        if self._nlp:
+            tokens = words
+            words = [token.lemma for token in tokens]
+            for token in tokens:
+                surface, lemma = token.text.lower(), token.lemma
+                if lemma not in self.lemma_index:
                     new_terms += 1
-                    # v0.29: a concept is tagged at acquisition —
-                    # its class under the grammar ledger and the
-                    # source it came from. Provenance is ground
-                    # truth: a word first learned from a lesson
-                    # carries that lesson's filing with it.
-                    cls = self._word_class(w)
-                    if cls is not None:
-                        tags = getattr(self, "_word_tags", None)
-                        if tags is None:
-                            tags = self._word_tags = {}
-                        tags[w] = {"c": cls, "src": meal["source"]}
-                self.concepts[w] = self.concepts.get(w, 0) + 1
-
+                aliases = self.lemma_index.setdefault(lemma, {})
+                aliases[surface] = aliases.get(surface, 0) + 1
+                for word in dict.fromkeys((surface, lemma)):
+                    if word not in self._word_tags:
+                        cls = self._word_class(word, pos=token.pos)
+                        self._word_tags[word] = {
+                            "c": cls,
+                            "src": meal["source"],
+                            "pos": token.pos,
+                        }
+                self.concepts[surface] = self.concepts.get(surface, 0) + 1
+        else:
+            for w in words:
+                if w not in STOPWORDS:
+                    if w not in self.concepts:
+                        new_terms += 1
+                        # v0.29: a concept is tagged at acquisition —
+                        # its class under the grammar ledger and the
+                        # source it came from. Provenance is ground
+                        # truth: a word first learned from a lesson
+                        # carries that lesson's filing with it.
+                        cls = self._word_class(w)
+                        if cls is not None:
+                            tags = getattr(self, "_word_tags", None)
+                            if tags is None:
+                                tags = self._word_tags = {}
+                            tags[w] = {"c": cls, "src": meal["source"]}
+                    self.concepts[w] = self.concepts.get(w, 0) + 1
         self._update_cooc(words)
         self.memory.append(
             {
@@ -1514,7 +1619,7 @@ class Aethel:
             self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
             print("[deep food] the classics nourish differently", flush=True)
 
-        top = sorted(self.concepts.items(), key=lambda kv: -kv[1])[:5]
+        top = sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[:5]
         print(
             f"[learned] {len(self.concepts)} concepts (+{new_terms} new) | "
             f"top: {', '.join(w for w, _ in top)}",
@@ -1531,7 +1636,7 @@ class Aethel:
 
         # Consuming a grammar lesson teaches the next curriculum rule.
         if meal["source"] == "schoolhouse":
-            self._study_grammar(meal)
+            self._study_grammar(meal, analysis=analysis)
         t = self.tastes.setdefault(meal["source"], [0, 0])
         t[0] += new_terms
         t[1] += 1
@@ -1562,7 +1667,7 @@ class Aethel:
                 )
             self.kept_passages.append(
                 {
-                    "text": text[:600],
+                    "text": analysis.passage(600) if analysis else text[:600],
                     "source": meal["source"],
                     "title": title[:80],
                     "tick": self.tick_count,
@@ -1638,9 +1743,13 @@ class Aethel:
             return
         candidates = [
             w
-            for w, _ in sorted(self.concepts.items(), key=lambda kv: -kv[1])[:10]
-            if not any(g["term"] == w for g in self.goals)
-            and w not in self.completed_terms
+            for w, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
+                :10
+            ]
+            if not any(
+                g.get("lemma_term", self._canonical(g["term"])) == w for g in self.goals
+            )
+            and w not in {self._canonical(t) for t in self.completed_terms}
         ]
         if not candidates:
             return
@@ -1648,10 +1757,13 @@ class Aethel:
         goal = {
             "question": f"what is {term}?",
             "term": term,
-            "start_count": self.concepts[term],
+            "start_count": self._concept_counts()[term],
             "progress": 0.0,
             "adopted_tick": self.tick_count,
         }
+        if self._nlp:
+            goal["lemma_term"] = term
+            goal["lemma_start_count"] = goal["start_count"]
         self.goals.append(goal)
         print(f"[goal adopted] {goal['question']}", flush=True)
         self.say(
@@ -1661,7 +1773,13 @@ class Aethel:
 
     def update_goals(self):
         for g in list(self.goals):
-            grown = self.concepts.get(g["term"], 0) - g["start_count"]
+            if self._nlp:
+                term = g.get("lemma_term", self._canonical(g["term"]))
+                grown = self._concept_counts().get(term, 0) - g.get(
+                    "lemma_start_count", g["start_count"]
+                )
+            else:
+                grown = self.concepts.get(g["term"], 0) - g["start_count"]
             new_progress = min(1.0, grown / 10.0)
             if new_progress > g["progress"] + 0.01:
                 g["progress"] = new_progress
@@ -1688,7 +1806,7 @@ class Aethel:
                 journal("goal_complete", question=g["question"])
                 self.goals.remove(g)
 
-                self.completed_terms.add(g["term"])
+                self.completed_terms.add(g.get("lemma_term", g["term"]))
 
     def breathe_morality(self, action):
         score, rationale = self._council_score(action)
@@ -2120,7 +2238,11 @@ class Aethel:
 
     def recall(self, seeds, k=2):
         """Retrieve relevant autobiographical events without consulting future or current-tick events."""
-        words = set(re.findall(r"[a-z]{5,}", " ".join(seeds).lower()))
+        words = (
+            self._normalized(" ".join(seeds))
+            if self._nlp
+            else set(re.findall(r"[a-z]{5,}", " ".join(seeds).lower()))
+        )
         words -= STOPWORDS
         if not words:
             return []
@@ -2144,7 +2266,11 @@ class Aethel:
         hits = []
         for _tick, _event, data in rows:
             text = str(data.get("text", ""))
-            overlap = sum(1 for w in words if w in text.lower())
+            overlap = (
+                len(words & self._normalized(text))
+                if self._nlp
+                else sum(1 for w in words if w in text.lower())
+            )
             if overlap >= 2:
                 hits.append((overlap, text[:160]))
         hits.sort(key=lambda t: -t[0])
@@ -2204,8 +2330,15 @@ class Aethel:
     def _check_open_questions(self, words):
         """Revisit open questions when new learning overlaps their concepts."""
         wset = set(words)
+        if self._nlp:
+            wset = {self._canonical(w) for w in wset}
         for q in self.open_questions:
-            if len(wset & set(q["keywords"])) >= 2 and q["touches"] < 3:
+            keys = (
+                self._normalized(" ".join(q["keywords"]))
+                if self._nlp
+                else set(q["keywords"])
+            )
+            if len(wset & keys) >= 2 and q["touches"] < 3:
                 self._question_touched(q)
                 self.awareness = min(1.0, self.awareness + 0.005)
                 self.say(
@@ -2636,7 +2769,7 @@ class Aethel:
                 self._word_tags = dict(getattr(self, "_loaded_word_tags", None) or {})
         return led
 
-    def _word_class(self, word):
+    def _word_class(self, word, pos=None):
         """What kind of word is this, for slot purposes? Layered:
         the tag she acquired it under (acquisition provenance is
         ground truth), then the people she actually knows — her
@@ -2646,6 +2779,8 @@ class Aethel:
         the word keeps its old life in the untyped pools and stays
         out of typed slots until something classifies it."""
         w = (word or "").lower()
+        if self._nlp and w in _grammar.SCAFFOLDING_WORDS:
+            return _grammar.SCAFFOLDING
         tag = (getattr(self, "_word_tags", None) or {}).get(w)
         if tag:
             return tag.get("c")
@@ -2653,7 +2788,7 @@ class Aethel:
         people |= {n.lower() for n in (getattr(self, "impressions", None) or {})}
         if w in people:
             return _grammar.PERSON
-        return _grammar.classify_word(w)
+        return _grammar.classify_word(w, pos=pos)
 
     def _note_catch(self, rule_id, detail):
         """Journal a grammar near-miss, capped at two a day: a
@@ -2672,7 +2807,7 @@ class Aethel:
     def _grammar_violations(self, line, loose=False):
         return _grammar.check_line(line, self._grammar().owned_ids(), loose=loose)
 
-    def _study_grammar(self, meal):
+    def _study_grammar(self, meal, analysis=None):
         """A grammar lesson eaten teaches her the next rule in order.
 
         Population, stated plainly (the grammar module's docstring
@@ -2691,7 +2826,9 @@ class Aethel:
         if led.next_rule() is None:
             return
         rule = led.learn_next(self.tick_count)
-        found = _grammar.extract_rules_from_lessons([meal])
+        found = _grammar.extract_rules_from_lessons(
+            [meal], analyses=[analysis] if analysis else None
+        )
         journal(
             "grammar_learned",
             rule=rule["id"],
@@ -2968,7 +3105,12 @@ class Aethel:
                 "a question",
                 "the dark",
             ]
-        return [c for c, _ in sorted(self.concepts.items(), key=lambda kv: -kv[1])[:k]]
+        return [
+            c
+            for c, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
+                :k
+            ]
+        ]
 
     def _current_book(self):
         cur = next((b for b in self.reading_list if not b["done"]), None)

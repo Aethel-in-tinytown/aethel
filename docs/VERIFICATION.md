@@ -90,3 +90,39 @@ matrix; those interpreters were not run locally. The dream-fragment test now
 requires actual truncation of a long fixture at a word boundary and separately
 checks that short text remains intact. Container instructions explicitly describe
 the unauthenticated read surface and loopback port bindings.
+
+## Optional NLTK backend follow-up
+
+Verified on 2026-10-22 with Python 3.10 and the pinned NLTK 3.9.2 resources:
+
+| Check | Result |
+| --- | --- |
+| Clean standard-library Python environment | 174 tests run; passed, with 2 optional checks skipped |
+| NLTK plus all web transports | 190 tests passed |
+| Legacy heuristic trajectory | Exact 160-tick state/journal match against the pre-change baseline, excluding additive language metadata and existing wall-clock fields |
+| NLTK same seed and save/rebuild | Identical 160-tick state, RNG streams and journal payloads; rebuild after tick 100 |
+| Missing package, missing models, incompatible saved pipeline | Headless and real web launches fail without changing organism state |
+| Offline startup | Headless launch, web worker, and installed wheel outside checkout passed; fresh model load rejects network/global NLTK data lookup |
+| Resource provisioning | Explicit download and offline archive installation passed; bad archives leave no partial installation |
+| Frontend domain tests | 31 passed |
+| TypeScript, ESLint, Prettier, build | Passed |
+| Python Ruff correctness and formatting | Passed |
+| Browser transport matrix, heuristic and NLTK | 56 passed total; 4 WS-only cases skipped in polling configurations |
+| Wheel packaging | Resource lock, upstream license notices, optional dependency and offline runtime verified |
+
+The browser matrix uses standard-library HTTP/polling, Uvicorn/picows, and
+Uvicorn/websockets at desktop 1440×1050 and mobile 390×844. It covers rendering,
+owner care, journal filtering, reconnects and fallbacks, and asserts that API
+status reports the requested backend and pinned version metadata. A preliminary
+run overlapped an asset rebuild and failed on transient asset 404s; the complete
+matrix passed after running the build and browser tests sequentially.
+
+CI now includes both backends in the existing Python-version and browser
+transport matrices. Other Python versions are configured in CI, not claimed as
+locally tested. Repeat with `AETHEL_E2E_LANGUAGE=nltk` and a provisioned
+`AETHEL_NLTK_DATA` directory; use `AETHEL_E2E_PYTHON` for the interpreter containing
+the optional package. Browser checks use the repository's isolated Playwright
+workflow because those processes do not expose external Chrome's WebMCP registry.
+
+See [language setup and comparisons](LANGUAGE.md) for the reproducible seeded-life
+and reading-fixture benchmark, measured CPU/memory costs, and tagging limits.

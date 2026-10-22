@@ -48,6 +48,24 @@ and is deliberately rejected before it can trigger an implicit Go build. WebSock
 prefer picows, fall back to `websockets`, and finally to HTTP polling. The selected
 engines appear in startup logs and `/api/v1/config`. See [deployment](docs/DEPLOYMENT.md).
 
+## Optional English language analysis
+
+The default remains standard-library heuristics. For contextual POS tags,
+POS-aware lemmas, sentence extraction, and whole-token recall:
+
+```sh
+python3 -m pip install '.[nlp]'
+python3 -m aethel_pkg.language_resources --download
+python3 aethel_live.py --language-backend nltk   # also works with --serve
+```
+
+Omitting the flag resumes the saved backend; existing saves use heuristics.
+Models are pinned and verified before ticking, with no runtime downloads or
+fallback. Activation preserves historical surface counts and goal progress while
+adding a lemma/alias index. NLTK lives can take different paths and use more CPU
+and memory. See [installation, offline provisioning, compatibility and measured
+behavior](docs/LANGUAGE.md).
+
 ## Development and checks
 
 Start Python with `--serve` after the first frontend build. In another terminal:

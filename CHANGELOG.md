@@ -1,5 +1,21 @@
 # Aethel CHANGELOG
 
+## Unreleased — Optional NLTK language backend
+
+- Keep standard-library heuristics as the default; explicitly select or resume a
+  saved language backend in headless and web launches.
+- Add the `nlp` extra (NLTK 3.9.2), explicit online/offline resource provisioning,
+  checksum-pinned English models and retained upstream licensing notices.
+- In NLTK mode, learn short POS-filtered content words with contextual lemmas,
+  retain surface counts beside a persisted canonical alias index, preserve goal
+  progress on activation, use sentence boundaries for new examples/passages,
+  and recall whole normalized tokens instead of substrings.
+- Expose language compatibility metadata in status; reject missing/incompatible
+  models before ticking. No council changes or new panels.
+- Verify legacy trajectory fidelity, same-seed/save-rebuild continuation, model
+  failure paths and offline startup. See docs/LANGUAGE.md for measured vocabulary,
+  classification, recall, runtime and memory differences.
+
 ## Unreleased — The town comes home
 
 - Integrate the Preact/Phaser UI with a process-isolated Python API and optional

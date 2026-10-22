@@ -34,6 +34,7 @@ def serve(args):
         "ticks": args.ticks,
         "interval": config.TICK_SECONDS / (args.time_scale or config.TIME_SCALE),
         "offline": args.offline,
+        "language_backend": args.language_backend,
     }
     worker = ctx.Process(
         target=worker_main,
@@ -139,3 +140,7 @@ def serve(args):
             mailbox.close()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+    if worker.exitcode and gateway.snapshot is None:
+        raise SystemExit(
+            gateway.error or "Simulation failed before its first snapshot; inspect logs"
+        )

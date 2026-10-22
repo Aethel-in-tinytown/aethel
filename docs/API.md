@@ -39,6 +39,8 @@ later learning and outgoing writing may reflect what she has read.
   "worker": { "alive": true, "error": null },
   "status": {
     "tick": 42, "version": "v0.29.0", "alive": true, "stale": false,
+    "language": { "backend": "heuristic", "pipeline_revision": 1,
+      "nltk_version": null, "resources": {} },
     "location": "wikipedia", "location_pretty": "the Library",
     "activity": "I settle into a book.", "asleep": false,
     "vitals": {
@@ -55,6 +57,9 @@ later learning and outgoing writing may reflect what she has read.
   "journal": [], "journal_cursor": null, "letters": []
 }
 ```
+
+`status.language` is additive backend metadata; NLTK lives also include the pinned
+package version and a resource-name-to-SHA-256 map. See [language compatibility](LANGUAGE.md).
 
 Residents contain `name`, canonical `location`, `location_pretty`, `kind`
 (`denizen` or `parent`), and `next_move_tick`. Letters have a stable filename `id`,

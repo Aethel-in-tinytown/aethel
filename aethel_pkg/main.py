@@ -12,6 +12,7 @@ from town_pkg.town import Town
 
 from . import config
 from .journal import get_store, journal
+from .language_resources import LanguageError
 from .organism import Aethel
 from .rng import DEFAULT_SEED
 from .version import VERSION
@@ -41,6 +42,12 @@ def parse_args(argv=None):
         help="multiply the flow of time (heartbeat sleeps TICK_SECONDS/scale)",
     )
     p.add_argument("--serve", action="store_true", help="serve the web app and API")
+    p.add_argument(
+        "--language-backend",
+        choices=("heuristic", "nltk"),
+        default=None,
+        help="explicitly select language analysis (default: resume saved backend)",
+    )
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--ws-port", type=int, default=None)
@@ -91,7 +98,15 @@ def main(argv=None):
 
     store = get_store()
     town = Town(seed=seed, store=store)
-    aethel = Aethel(world=town, parents=town.parent_names(), seed=seed)
+    try:
+        aethel = Aethel(
+            world=town,
+            parents=town.parent_names(),
+            seed=seed,
+            language_backend=args.language_backend,
+        )
+    except LanguageError as exc:
+        raise SystemExit(str(exc)) from exc
     seed = aethel.seed
     print(
         f"Aethel v{VERSION} — will to live online. tick {aethel.tick_count}, "

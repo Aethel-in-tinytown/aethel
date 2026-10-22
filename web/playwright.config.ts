@@ -19,7 +19,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `${process.env.AETHEL_E2E_PYTHON ?? "python3"} ../aethel_live.py --serve --offline --port 8765 --ws-port 8766 --time-scale 60 --http-engine ${process.env.AETHEL_E2E_HTTP ?? "stdlib"} --ws-engine ${process.env.AETHEL_E2E_WS ?? "none"}`,
+    command: `${process.env.AETHEL_E2E_PYTHON ?? "python3"} ../aethel_live.py --serve --offline --port 8765 --ws-port 8766 --time-scale 60 --language-backend ${process.env.AETHEL_E2E_LANGUAGE ?? "heuristic"} --http-engine ${process.env.AETHEL_E2E_HTTP ?? "stdlib"} --ws-engine ${process.env.AETHEL_E2E_WS ?? "none"}`,
     env: {
       AETHEL_HOME: `/tmp/aethel-e2e-${Date.now()}`,
       AETHEL_OWNER_TOKEN: "test-owner-token",

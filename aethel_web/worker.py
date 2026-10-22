@@ -14,6 +14,7 @@ from pathlib import Path
 
 from aethel_pkg import config
 from aethel_pkg.journal import get_store
+from aethel_pkg.language_resources import LanguageError
 from aethel_pkg.organism import Aethel
 from town_pkg.town import Town
 from .snapshot import build_snapshot, journal_page
@@ -127,7 +128,18 @@ def worker_main(options, incoming, outgoing, stop):
         configure_offline()
     store = get_store()
     town = Town(seed=options["seed"], store=store)
-    organism = Aethel(world=town, parents=town.parent_names(), seed=options["seed"])
+    try:
+        organism = Aethel(
+            world=town,
+            parents=town.parent_names(),
+            seed=options["seed"],
+            language_backend=options.get("language_backend"),
+        )
+    except LanguageError as exc:
+        outgoing.put({"fatal": str(exc)})
+        stop.set()
+        store.close()
+        raise
     revision = organism.tick_count
     ensure_commands(store)
     records = command_records(store, pending=True)

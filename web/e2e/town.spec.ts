@@ -12,6 +12,15 @@ test("real town, nighttime preferences, filters and owner care", async ({
   ).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible();
   const settings = await (await page.request.get("/api/v1/config")).json();
+  const status = await (await page.request.get("/api/v1/status")).json();
+  expect(status.language.backend).toBe(
+    process.env.AETHEL_E2E_LANGUAGE ?? "heuristic",
+  );
+  expect(status.language.pipeline_revision).toBe(1);
+  if (status.language.backend === "nltk") {
+    expect(status.language.nltk_version).toBe("3.9.2");
+    expect(Object.keys(status.language.resources)).toHaveLength(3);
+  }
   await expect(page.getByRole("status").first()).toContainText(
     settings.websocket_engine === "disabled" ? "polling" : "live",
   );

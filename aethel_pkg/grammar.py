@@ -301,7 +301,7 @@ def _singular(word):
     return word
 
 
-def classify_word(word):
+def classify_word(word, pos=None):
     """What kind of word is this? Returns a class string or None.
 
     Exact lexicon first (singularized too), scaffolding before
@@ -320,6 +320,14 @@ def classify_word(word):
     cls = _SEED.get(w) or _SEED.get(_singular(w))
     if cls:
         return cls
+    # Context can establish grammar, never personhood, edibility or concreteness.
+    # An unknown noun stays unclassified rather than falling through to -ing/-ed.
+    if pos:
+        for prefix, category in (("VB", VERB), ("JJ", ADJECTIVE), ("RB", ADVERB)):
+            if pos.startswith(prefix):
+                return category
+        if pos.startswith("NN"):
+            return None
     if w.endswith("ing") and len(w) > 4:
         return VERB
     if w.endswith("ed") and len(w) > 3:
@@ -634,7 +642,7 @@ def check_line(text, owned_ids, loose=False):
     return violations
 
 
-def extract_rules_from_lessons(lessons):
+def extract_rules_from_lessons(lessons, analyses=None):
     """Harvest hook: pull rule-bearing sentences from lesson texts.
 
     `lessons` are meal-shaped dicts (title/text/source). For each
@@ -646,22 +654,28 @@ def extract_rules_from_lessons(lessons):
     example a rule carries, and only from text she actually ate.
     Pure and offline-testable."""
     sentences = []
-    for les in lessons or []:
+    for index, les in enumerate(lessons or []):
         text = (les or {}).get("text") or ""
-        for s in re.split(r"(?<=[.!?])\s+", text):
+        analysis = analyses[index] if analyses else None
+        candidates = (
+            [text[a:b] for a, b in analysis.sentences]
+            if analysis
+            else re.split(r"(?<=[.!?])\s+", text)
+        )
+        for s in candidates:
             s = s.strip()
             if 0 < len(s) <= 180:
-                sentences.append(s)
+                sentences.append((s, les.get("source")))
     found = {}
     for rule in CURRICULUM:
-        for s in sentences:
+        for s, source in sentences:
             low = s.lower()
             if any(k in low for k in rule["keywords"]):
                 if not any(w in SCAFFOLDING_WORDS for w in re.findall(r"[a-z]+", low)):
                     found[rule["id"]] = {
                         "rule_id": rule["id"],
                         "example_candidate": s,
-                        "source": (lessons[0].get("source") if lessons else None),
+                        "source": source,
                     }
                     break
     return found

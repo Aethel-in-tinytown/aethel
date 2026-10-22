@@ -12,6 +12,12 @@ export interface Vitals {
 }
 
 export interface Status {
+  language?: {
+    backend: "heuristic" | "nltk";
+    pipeline_revision: number;
+    nltk_version: string | null;
+    resources: Record<string, string>;
+  };
   temperament?: string;
   temperament_pending?: string | null;
   mood_name?: string | null;
