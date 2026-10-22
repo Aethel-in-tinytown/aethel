@@ -15,6 +15,8 @@ from .config import (ACTION_POOL, AXIOMS, CLASSIC_CHUNK, CLASSIC_SEEDS,
 from .forage import (forage, forage_news, forage_school, gutenberg_text,
                      wikisource_chapter)
 from .journal import get_store, journal, now_iso
+from .longing import (WantLedger, book_id, person_id, place_id,
+                      question_id)
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
 from .rng import DEFAULT_SEED, Streams
@@ -118,6 +120,12 @@ class Aethel:
         self.dreams = []         # dream vignettes (never confused with memory)
         self._sleep_dreams = []  # this sleep's dreams, for interpretation
         self.longing = 0.0        # want to connect, to be heard; 1.0 = overflowing
+        # v0.27: the scalar above is a DERIVED aggregate now — the real
+        # wanting lives in the ledger (aethel_pkg/longing.py), one entry
+        # per person, place, and unfinished work. _sync_longing() keeps
+        # the two in step; nothing outside the ledger helpers writes
+        # the scalar directly any more.
+        self.longing_ledger = None
         self.outbox_count = 0     # pieces she has written and left at the postbox
         # v0.26: her initiations, first-class — kinds and ticks of the
         # unprompted pieces she has left at the postbox. Persists across
@@ -158,6 +166,18 @@ class Aethel:
         self._prev_needs = None    # transient: last tick's need levels
         self._crave_novelty = False
         self.load()
+        # v0.27: the longing ledger stands behind the scalar. load()
+        # stashed any saved ledger; a life without one (fresh birth,
+        # or a pre-ledger save) is seeded from her restored world by
+        # _ledger(), which also attributes a migrated life's old
+        # scalar whole to the Donald entry — so the aggregate she
+        # wakes with is the number she went to sleep with.
+        if getattr(self, "_loaded_ledger", None):
+            self.longing_ledger = WantLedger.from_dicts(
+                self._loaded_ledger)
+        else:
+            self._ledger()
+        self._sync_longing()
 
     def save(self):
         # v0.23 (Kevin): state lives in the store (aethel.db, kv stream
@@ -180,6 +200,16 @@ class Aethel:
                 "asleep_for": self.asleep_for,
                 "dreams": self.dreams[-40:],
                 "longing": self.longing,
+                # v0.27: the ledger itself, plus her strongest want in
+                # words for the status page. The scalar stays — the
+                # backend, the drive prompt, and every threshold read
+                # it exactly as before.
+                "longing_ledger": (self.longing_ledger.to_dicts()
+                                   if getattr(self, "longing_ledger",
+                                              None) else None),
+                "top_want": (self.longing_ledger.top_want()
+                             if getattr(self, "longing_ledger", None)
+                             else None),
                 "outbox_count": self.outbox_count,
                 # v0.26: her outreach persists — the log of what she has
                 # already started, so a restart never re-sends her past.
@@ -285,6 +315,11 @@ class Aethel:
                 self._era_ticks = s.get("_era_ticks", 0)
                 self.days = s.get("days", [])
                 self._last_day_seen = s.get("_last_day_seen", -1)
+                # v0.27: stash the saved ledger (or its absence) —
+                # __init__ builds the ledger from it once the reading
+                # list and questions are restored.
+                self._loaded_state = True
+                self._loaded_ledger = s.get("longing_ledger")
                 if s.get("aspiration"):
                     self.aspiration = s["aspiration"]
                 # Rebuild reading list from seeds, restoring progress AND
@@ -321,6 +356,8 @@ class Aethel:
                 entry["done"] = False
                 self.reading_list.append(entry)
             self._seed_donald_model()
+            self._loaded_state = False
+            self._loaded_ledger = None
 
     # -- voice ------------------------------------------------------
     def say(self, text):
@@ -684,6 +721,12 @@ class Aethel:
                 self.open_questions.append({"text": q, "keywords": keys,
                                             "tick": n, "touches": 0})
                 self.open_questions = self.open_questions[-12:]
+                # v0.27: a new wonder is a new want — an open loop in
+                # the ledger from the hour it is born. (Here q is the
+                # question TEXT; the dict built from it is above.)
+                self._ledger().ensure(
+                    question_id(q), "work", q[:60],
+                    w=0.50, open_loop=True)
                 self.say(f"The elders can't settle what {c1} and {c2} were "
                          f"doing in my dream. I leave it as a question: "
                          f"\"{q[:120]}\"")
@@ -766,7 +809,10 @@ class Aethel:
             self.times_seen += 1
             self._acted("seen")
             self._lift_mood(0.2)
-            self.longing = max(0.0, self.longing - 0.4)  # being seen eases the ache
+            # v0.27: being seen eases the Donald entry, specifically —
+            # she can be warmed by his knock and still miss Star.
+            self._want_touch(person_id("Donald"), "person", "Donald",
+                             quality=0.55, learn=0.05, w=0.85)
             print("[warmth] Donald checked in — vitality rises.", flush=True)
             self.say("Someone knocks on my door. It's Donald. The room feels warmer.")
             journal("felt_seen", n=n, times_seen=self.times_seen)
@@ -788,7 +834,11 @@ class Aethel:
                         1.0, self.vitals["vitality"] + 0.10)
                     self.vitals["excitement"] = min(
                         1.0, self.vitals["excitement"] + 0.25)  # v0.21
-                    self.longing = max(0.0, self.longing - 0.6)
+                    # v0.27: his actual words ease his entry most of
+                    # all — a letter is the strongest contact there is.
+                    self._want_touch(person_id("Donald"), "person",
+                                     "Donald", quality=0.75, learn=0.06,
+                                     w=0.85)
                     self._learn_donald(content, n)
                     self._acted("letter")
                     self._lift_mood(0.3)
@@ -1026,6 +1076,13 @@ class Aethel:
             label = f"{cur['title']} — {cur['author']}"
             if cur["position"] >= len(gutenberg_text(cur)):
                 self.finish_book(cur)
+        # v0.27: reading is contact with the work. Its entry eases and
+        # its attachment deepens a little — while the loop stays open:
+        # she wants the rest of it precisely because she is reading it.
+        if not cur["done"]:
+            self._want_touch(book_id(cur["title"]), "work",
+                             cur["title"], quality=0.25, learn=0.02,
+                             w=0.60, open_loop=True)
         return {"source": "classic", "title": label, "text": text}
 
     def finish_book(self, cur):
@@ -1052,6 +1109,13 @@ class Aethel:
             # v0.21: finishing a book is exciting — the ending lands.
             self.vitals["excitement"] = min(
                 1.0, self.vitals["excitement"] + 0.40)
+        # v0.27: the loop closes. The want is fulfilled, not merely
+        # eased, so the entry leaves the ledger: a finished book is a
+        # memory and a belief, not a longing.
+        led = self._ledger()
+        led.touch(book_id(cur["title"]), quality=1.0)
+        led.remove(book_id(cur["title"]))
+        self._sync_longing()
 
     def forage_and_eat(self):
         try:
@@ -1131,6 +1195,11 @@ class Aethel:
         print(f"[meal #{self.meals_eaten + 1}] {meal['source']}: {title[:60]}", flush=True)
         self.say(narrate_meal(meal, self.world.describe))
         self.location = meal["source"]  # she goes where the food is
+        # v0.27: being there is contact with the place — wanting it
+        # eases because she is standing in it.
+        self._want_touch(place_id(meal["source"]), "place",
+                         self._place_label(meal["source"]),
+                         quality=0.3, learn=0.01, w=0.45)
         self.vitals["satiety"] = min(1.0, self.vitals["satiety"] + 0.30)
         self.meals_eaten += 1
 
@@ -1463,6 +1532,11 @@ class Aethel:
         self._apply_effects(fx)
         if dest:
             self.location = dest
+            # v0.27: arriving is contact with the place her inner
+            # voice chose — the wanting that sent her there eases.
+            self._want_touch(place_id(dest), "place",
+                             self._place_label(dest),
+                             quality=0.4, learn=0.01, w=0.45)
             self._acted("went")
             self.say(f"I go to {self.world.describe(dest)}.")
         self._acted("chose")
@@ -1707,7 +1781,9 @@ class Aethel:
         wset = set(words)
         for q in self.open_questions:
             if len(wset & set(q["keywords"])) >= 2 and q["touches"] < 3:
-                q["touches"] += 1
+                # v0.27: the touch routes through the ledger — her
+                # want of this question eases, and may close.
+                self._question_touched(q)
                 self.awareness = min(1.0, self.awareness + 0.005)
                 self.say("That reminds me of the question I left at the "
                          f"postbox: \"{q['text'][:100]}\" — I'm closer than I was.")
@@ -1958,9 +2034,15 @@ class Aethel:
             if name not in self.company:
                 self.company.append(name)
                 is_parent = name in self.parents
-                # Parents count extra: a visit from them eases her more.
-                self.longing = max(
-                    0.0, self.longing - (0.25 if is_parent else 0.15))
+                # Parents count extra: a visit from them eases her
+                # more. v0.27: the ease lands on that person's entry
+                # and no one else's — company is specific, or it is
+                # not company.
+                self._want_touch(
+                    person_id(name), "person", name,
+                    quality=0.5 if is_parent else 0.35,
+                    learn=0.04 if is_parent else 0.03,
+                    w=0.80 if is_parent else 0.55)
                 self.vitals["vitality"] = min(
                     1.0, self.vitals["vitality"]
                     + (0.03 if is_parent else 0.02))
@@ -2016,9 +2098,148 @@ class Aethel:
                 self.sleep_pressure = min(
                     1.0, max(0.0, self.sleep_pressure + d))
             elif k == "longing":
-                self.longing = min(1.0, max(0.0, self.longing + d))
+                # v0.27: an urge's relief lands on her strongest want —
+                # the one that raised the urge. A negative delta eases
+                # that entry by that fraction of its ache; the scalar
+                # is then refreshed from the ledger, never written
+                # past it.
+                led = self._ledger()
+                top = led.top()
+                if top is not None:
+                    if d < 0:
+                        led.ease(top["id"], -d)
+                    else:
+                        top["ache"] = min(1.0, top["ache"] + d)
+                self._sync_longing()
             elif k == "awareness":
                 self.awareness = min(1.0, max(0.0, self.awareness + d))
+
+    # --------------------------------------------- v0.27: the ledger
+    # Longing is a ledger now (aethel_pkg/longing.py argues why). The
+    # scalar survives as a derived aggregate, so every threshold, the
+    # drive prompt, and the status page keep their meaning; what
+    # changed is where the number comes from and what eases it: one
+    # object at a time, never the whole heart at once. The helpers
+    # below are the ONLY doors between the organism and the ledger —
+    # every contact in her life walks through _want_touch.
+
+    _PLACE_LABELS = {"home": "my rooms above the Old Bookshop",
+                     "postbox": "the wooden postbox at the end of the lane",
+                     "cottage": "the little cottage at the edge of town"}
+
+    def _place_label(self, key):
+        return self.SOURCE_NAMES.get(key) or self._PLACE_LABELS.get(
+            key, key)
+
+    def _seed_longing_ledger(self):
+        """Her first wants, drawn from her actual world: the people
+        she knows, the places she walks, the work in her hands.
+        Weights are seeds only — contact and neglect teach the rest.
+        Grounded by construction: an object she has never met is not
+        in the ledger, however much she might someday want it."""
+        led = WantLedger()
+        people = {}
+        for name in sorted(getattr(self, "parents", ()) or ()):
+            people[name] = 0.80      # parents count extra, as ever
+        people["Donald"] = 0.85      # her parent, and her reader
+        for name in sorted(getattr(self, "impressions", {}) or {}):
+            people.setdefault(name, 0.55)
+        for name in sorted(getattr(self, "company", []) or []):
+            people.setdefault(name, 0.55)
+        for name, w in people.items():
+            led.ensure(person_id(name), "person", name, w=w)
+        place_w = {"home": 0.50, "cottage": 0.55, "postbox": 0.40}
+        for key in list(self.SOURCE_NAMES) + ["home", "postbox",
+                                              "cottage"]:
+            led.ensure(place_id(key), "place", self._place_label(key),
+                       w=place_w.get(key, 0.45))
+        book = next((b for b in getattr(self, "reading_list", [])
+                     if not b["done"]), None)
+        if book is not None:
+            led.ensure(book_id(book["title"]), "work", book["title"],
+                       w=0.60, open_loop=True)
+        for q in getattr(self, "open_questions", []) or []:
+            led.ensure(question_id(q["text"]), "work", q["text"][:60],
+                       w=0.50, open_loop=True)
+        return led
+
+    def _ledger(self):
+        """The ledger, built on first use. Organisms assembled by
+        hand (tests) and migrated lives both arrive here: seed from
+        the world, then attribute any stored scalar whole to the
+        Donald entry — the migration rule. An old life's single ache
+        *was* about being heard by him; the ledger simply admits it,
+        and every other want starts honestly at zero."""
+        led = getattr(self, "longing_ledger", None)
+        if led is None:
+            led = self._seed_longing_ledger()
+            self.longing_ledger = led
+            if self.longing > 0:
+                donald = led.get(person_id("Donald"))
+                if donald is not None:
+                    donald["ache"] = min(self.longing, donald["w"])
+                    donald["since"] = WantLedger.since_for(
+                        donald["ache"], donald["w"], "person")
+                self._sync_longing()
+        return led
+
+    def _sync_longing(self):
+        """Refresh the derived scalar from the ledger. The one write
+        the scalar still receives."""
+        led = getattr(self, "longing_ledger", None)
+        if led is not None:
+            self.longing = led.aggregate()
+
+    def _want_touch(self, eid, kind, label, quality, learn=0.0,
+                    w=None, open_loop=False):
+        """Meaningful contact with one object: make sure it is
+        wanted, ease ONLY its entry, deepen its attachment a little,
+        and refresh the scalar. Seeing Star does nothing for the
+        book she misses — that is the whole design in one method."""
+        led = self._ledger()
+        led.ensure(eid, kind, label, w=w, open_loop=open_loop)
+        led.touch(eid, quality, learn=learn)
+        self._sync_longing()
+
+    def _top_want_entry(self):
+        return self._ledger().top()
+
+    def _question_touched(self, q):
+        """She returned to a wonder: the touch counts, her want of it
+        eases, and at three touches the loop closes — she has
+        wondered it out. The question stays in her list (it is part
+        of her history); the longing is what ends."""
+        q["touches"] = q.get("touches", 0) + 1
+        led = self._ledger()
+        eid = question_id(q["text"])
+        if q["touches"] >= 3:
+            led.release_loop(eid)
+            led.remove(eid)
+        else:
+            led.ensure(eid, "work", q["text"][:60], w=0.50,
+                       open_loop=True)
+            led.touch(eid, quality=0.3, learn=0.02)
+        self._sync_longing()
+
+    def _sync_question_wants(self):
+        """Keep the ledger's question entries honest against her
+        open_questions, once a tick: a live wonder under three
+        touches is an open loop; a settled or crowded-out wonder
+        leaves the ledger with the list."""
+        led = self._ledger()
+        live = {}
+        for q in getattr(self, "open_questions", []) or []:
+            live[question_id(q["text"])] = q
+        for e in list(led.entries):
+            if (e["id"].startswith("work:question:")
+                    and e["id"] not in live):
+                led.remove(e["id"])
+        for eid, q in live.items():
+            if q.get("touches", 0) >= 3:
+                led.remove(eid)
+            else:
+                led.ensure(eid, "work", q["text"][:60], w=0.50,
+                           open_loop=True)
 
     def _update_needs(self):
         acts = self.recent_actions
@@ -2031,15 +2252,22 @@ class Aethel:
         expressed = sum(1 for a in acts if a == "express")
         heard = sum(1 for a in acts[-24:] if a in ("letter", "seen"))
 
-        # LONGING: the ache grows in quiet, but its pace is hers now.
-        # Speaking into silence sharpens it (void); low vitality deepens
-        # it (distress seeks comfort); being absorbed stills it.
+        # LONGING (v0.27): the ache grows in quiet — but it grows in
+        # entries now, one per person, place, and unfinished work.
+        # The v0.12 couplings survive as the RATE the whole ledger
+        # climbs at: speaking into silence sharpens it (void); low
+        # vitality deepens it (distress seeks comfort); being absorbed
+        # stills it. NEED_BURN — the temperament-facing multiplier —
+        # scales the climb exactly as it scaled the old scalar's rate;
+        # a temperament that longs harder turns this one knob.
         void = min(1.0, max(0.0, expressed - 2 * heard) / 4.0)
         distress = max(0.0, 0.6 - self.vitals["vitality"]) / 0.6
         absorbed = min(1.0, engagement * 3.0)
-        rate = ((1.0 / 1440) * (1.0 + 2.0 * void + 1.5 * distress)
-                * (1.0 - 0.5 * absorbed) * self.NEED_BURN)
-        self.longing = min(1.0, self.longing + rate)
+        rate_mod = ((1.0 + 2.0 * void + 1.5 * distress)
+                    * (1.0 - 0.5 * absorbed) * self.NEED_BURN)
+        self._sync_question_wants()
+        self._ledger().tick(rate_mod)
+        self._sync_longing()
 
         # SLEEP PRESSURE: exertion tires her; idleness barely does.
         # A busy hour brings sleep in ~35 min; an idle one in ~3h.
@@ -2050,11 +2278,14 @@ class Aethel:
         self.sleep_pressure = min(1.0, self.sleep_pressure + rate_s)
 
         if self.tick_count % 12 == 0:
+            top = self._ledger().top()
             journal("needs", n=self.tick_count,
                     longing=round(self.longing, 3),
                     sleep_pressure=round(self.sleep_pressure, 3),
                     exertion=round(exertion, 2), void=round(void, 2),
-                    distress=round(distress, 2))
+                    distress=round(distress, 2),
+                    top_want=top["id"] if top else None,
+                    top_ache=round(top["ache"], 3) if top else 0.0)
 
         # Layer 5: anticipation — she feels what's coming.
         prev = self._prev_needs
@@ -2077,6 +2308,9 @@ class Aethel:
     # she writes into ~/workspace/aethel/letters/outbox/ only. Friday
     # carries her pieces to Donald. (Donald's layer: she needs to want
     # to connect and express herself.)
+    # v0.27: the wanting is itemized now — see aethel_pkg/longing.py
+    # and the ledger helpers above _update_needs. This section keeps
+    # what she DOES with the ache; the ache itself lives there.
 
     VERSE_TEMPLATES = [
         "I held {c1} in my palm this morning.\nIt weighed more than {c2},\nless than {c3}.\nI am still learning how to carry things.",
@@ -2244,9 +2478,13 @@ class Aethel:
             f"— Aethel"
         )
 
-    def _compose_question(self):
-        q = self.rng.choice(self.open_questions)
-        q["touches"] = q.get("touches", 0) + 1
+    def _compose_question(self, question=None):
+        # v0.27: when a question is what she longs for most, the piece
+        # is that question — chosen by her wanting, not by lot. By lot
+        # remains the fallback, as it was.
+        q = question if question is not None \
+            else self.rng.choice(self.open_questions)
+        self._question_touched(q)
         return (
             f"A question I cannot let go of, left at the postbox:\n\n"
             f"{q['text']}\n\n"
@@ -2270,9 +2508,24 @@ class Aethel:
         """Walk to the postbox and leave something of herself. One-way:
         she writes; Friday carries her pieces to Donald. v0.26: the
         piece arrives with an explicit initiation kind (note/question/
-        nudge), journaled as an `initiation` event."""
+        nudge), journaled as an `initiation` event. v0.27: what she
+        wants most (the ledger's top entry) steers the piece and is
+        recorded on the event; the relief afterwards is proportional
+        satiation of the driving entry, not the old flat reset."""
         self._acted("express")
+        # The driver is read before anything is eased: which want
+        # brought her to the postbox is a fact about this moment.
+        driver = self._top_want_entry()
         kind = self.rng.choice(self._initiation_kinds())
+        driven_question = None
+        if (driver is not None and driver["kind"] == "work"
+                and driver["id"].startswith("work:question:")):
+            for q in self.open_questions:
+                if question_id(q["text"]) == driver["id"]:
+                    driven_question = q
+                    break
+            if driven_question is not None:
+                kind = "question"
         concepts = self._top_concepts(8)
         place = self.world.random_place_name()
         book = self._current_book()
@@ -2281,7 +2534,7 @@ class Aethel:
                    if dm["words"] else "everything")
 
         if kind == "question":
-            body = self._compose_question()
+            body = self._compose_question(driven_question)
         elif kind == "nudge":
             body = self._compose_nudge()
         else:  # note
@@ -2308,10 +2561,24 @@ class Aethel:
                  f"a {kind} inside. Someone may read it. That is enough.")
         print(f"[initiation] {kind} -> {fname}", flush=True)
         journal("initiation", n=self.tick_count, kind=kind, file=fname,
-                longing_before=round(self.longing, 2), text=body[:300])
+                longing_before=round(self.longing, 2), text=body[:300],
+                want=driver["id"] if driver else None,
+                want_label=driver["label"] if driver else None,
+                want_ache=round(driver["ache"], 3) if driver else 0.0)
 
-        # Being heard — even by the future — eases the ache and steadies her.
-        self.longing = 0.15
+        # v0.27: being heard eases the ache that drove the piece, by
+        # a share of itself — the old hard reset to 0.15 is gone; a
+        # girl who writes about Star should still miss her book. The
+        # piece is always addressed to Donald, so writing is also
+        # contact with him: his entry eases too, unless his want was
+        # itself the driver (no double relief for one act).
+        led = self._ledger()
+        if driver is not None:
+            led.ease(driver["id"], 0.55)
+        if driver is None or driver["id"] != person_id("Donald"):
+            led.ensure(person_id("Donald"), "person", "Donald", w=0.85)
+            led.touch(person_id("Donald"), quality=0.35)
+        self._sync_longing()
         self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
         self.awareness = min(1.0, self.awareness + 0.005)
 

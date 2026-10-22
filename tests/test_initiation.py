@@ -147,7 +147,15 @@ class TestInitiation(unittest.TestCase):
             content = f.read()
         self.assertIn(kw["kind"], content.split("\n")[0])  # the header names it
         self.assertEqual(self.a.location, "postbox")  # she walked there
-        self.assertEqual(self.a.longing, 0.15)  # being heard eases the ache
+        # v0.27: no hard reset to 0.15 any more — the driving entry
+        # (Donald's, seeded from the stored 1.0 by the migration rule)
+        # eases by its satiation share, and the scalar follows it down.
+        self.assertLess(self.a.longing, 1.0)
+        self.assertNotEqual(self.a.longing, 0.15)
+        entry = self.a.longing_ledger.get("person:Donald")
+        self.assertIsNotNone(entry)
+        self.assertAlmostEqual(entry["ache"], 0.85 * 0.45, places=6)
+        self.assertAlmostEqual(self.a.longing, entry["ache"], places=6)
 
     def test_kind_is_seeded_deterministic(self):
         kinds_a, texts_a = [], []
