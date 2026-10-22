@@ -70,13 +70,27 @@ class MockLLM:
             "oxygen": "DRIVE: conscience — reflect on my actions and principles.",
         }[low]
 
-    def moral_score(self, action: str, philosophers) -> tuple:
+    def moral_score(self, action: str, philosophers, weights=None) -> tuple:
         """The council votes. Elders with no axiom hits abstain; negated
-        words count for nothing. Returns (mean_of_votes, per-elder notes)."""
+        words count for nothing. Returns (mean_of_votes, per-elder notes).
+
+        ``weights`` (v0.28) is the temperament seam: a per-voice
+        emphasis, {philosopher: multiplier}. A lead voice's vote counts
+        more in the mean; a muted voice still speaks, just softer —
+        emphasis moves verdicts at the margin, it does not gag anyone.
+        The weighted mean covers the same voters as the plain mean.
+        One precision note, stated plainly because the gate depends on
+        knowing exactly where identity holds: Python's built-in sum()
+        uses compensated summation, so a weighted call's result can
+        differ from the plain mean by ~1 ULP even at all-1.0 weights.
+        That is summation order, not behavior — and it cannot reach
+        the control strain, because the organism only passes weights
+        when the active pack HAS a voice table (Aethel._council_score);
+        Even Keel's empty table takes the legacy call below, untouched."""
         words = _tokenize(action)
         negated = _negated_positions(words)
         present = [w for i, w in enumerate(words) if i not in negated]
-        votes, notes = [], []
+        votes, voters, notes = [], [], []
         for name in philosophers:
             ax = AXIOMS.get(name, {"virtues": [], "vices": []})
             vp = sum(1 for w in ax["virtues"] if w in present)
@@ -87,10 +101,19 @@ class MockLLM:
                 continue
             score = max(0.0, min(1.0, 0.55 + 0.12 * vp - 0.30 * vn))
             votes.append(score)
+            voters.append(name)
             notes.append(f"{short}:{score:.2f}")
         if not votes:
             return 0.5, "nine voices, no opinions — neutrality"
-        return sum(votes) / len(votes), " | ".join(notes)
+        if weights is None:
+            return sum(votes) / len(votes), " | ".join(notes)
+        num = 0.0
+        den = 0.0
+        for name, score in zip(voters, votes):
+            w = float(weights.get(name, 1.0))
+            num += score * w
+            den += w
+        return num / den, " | ".join(notes)
 
 
 # --------------------------------------------------------------- the organism

@@ -60,12 +60,14 @@ want", independent of how many things exist to be wanted. The
 strongest want leads; a broadly aching heart still reads higher
 than a single quiet one.
 
-Temperament mapping: the organism-wide NEED_BURN (organism.py) is the
-temperament-facing longing multiplier. It reaches the ledger inside
+Temperament mapping: two seams, both scaling climbs, never ceilings.
+The organism-wide NEED_BURN (organism.py) reaches the ledger inside
 the per-tick ``rate_mod`` the organism computes (void sharpens,
-distress deepens, absorption stills — the v0.12 couplings), scaling
-how fast every entry climbs toward its ceiling. A temperament that
-"longs more" raises NEED_BURN; the ledger's shape does not change.
+distress deepens, absorption stills — the v0.12 couplings). On top of
+that, v0.28's strains pass ``class_mods`` into ``tick()`` — per-class
+multipliers, so Ember makes her miss people at 1.8x while her books
+climb at a damped 1.4x. The ledger's shape does not change; only the
+weather does. (aethel_pkg/temperament.py argues the mapping.)
 
 No randomness lives here, by design: wanting is arithmetic on her
 history, and history is already hers. Determinism (same seed, same
@@ -171,16 +173,26 @@ class WantLedger:
             e["open"] = False
 
     # -- time ----------------------------------------------------------
-    def tick(self, rate_mod):
+    def tick(self, rate_mod, class_mods=None):
         """One heartbeat of wanting. ``rate_mod`` is the organism's
         coupling term (void, distress, absorption, NEED_BURN): it
         scales the climb, never the ceilings — what she wants is
-        hers; how fast it rises is her weather."""
+        hers; how fast it rises is her weather.
+
+        ``class_mods`` (v0.28) is the temperament seam: a per-class
+        multiplier on the climb, {person/place/work: factor}, so a
+        strain can make her miss *people* faster without touching
+        how she misses a book. None (and any missing class) means
+        1.0 — the arithmetic below multiplies by exactly 1.0 in that
+        case, which is exact in IEEE 754, so a caller passing an
+        all-1.0 map and a caller passing nothing produce bit-identical
+        aches. The golden-vector gate leans on that."""
         for e in self.entries:
             e["since"] += 1
             ceiling = e["w"] * (OPEN_LOOP_BONUS if e["open"] else 1.0)
             ceiling = min(1.0, ceiling)
-            step = 1.0 - math.exp(-rate_mod / TAU_TICKS[e["kind"]])
+            mod = class_mods.get(e["kind"], 1.0) if class_mods else 1.0
+            step = 1.0 - math.exp(-rate_mod * mod / TAU_TICKS[e["kind"]])
             e["ache"] += (ceiling - e["ache"]) * step
             if e["ache"] > ceiling:
                 e["ache"] = ceiling

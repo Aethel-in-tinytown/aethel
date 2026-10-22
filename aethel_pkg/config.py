@@ -32,6 +32,14 @@ def books_dir():
 def attention_path():
     return os.path.join(base_dir(), "attention")
 
+
+def temperament_path():
+    # v0.28: the switch request — a strain id written here is noticed
+    # in _sense, queued, and applied at her next waking. A control
+    # file like the attention file: the outside world asks; she
+    # decides when (at the sleep boundary, always).
+    return os.path.join(base_dir(), "temperament")
+
 def letters_dir():
     return os.path.join(base_dir(), "letters")
 

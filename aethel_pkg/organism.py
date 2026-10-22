@@ -20,6 +20,8 @@ from .longing import (WantLedger, book_id, person_id, place_id,
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
 from .rng import DEFAULT_SEED, Streams
+from .temperament import TEMPERAMENTS
+from .temperament import pack as temperament_pack
 from .world import World
 
 
@@ -76,6 +78,11 @@ class Aethel:
         self.rng = self.streams.stream("organism")
         self.rng_dreams = self.streams.stream("dreams")
         self.rng_forage = self.streams.stream("forage")
+        # v0.28: Briar's daily jitter draws from its own stream, so a
+        # wildling's weather never perturbs the sequences her other
+        # systems already live by. Spawned for every strain (the spawn
+        # is derivation, not a draw) — Even Keel simply never drinks.
+        self.rng_temperament = self.streams.stream("temperament")
         # v0.23 (Kevin): goals she has already settled are never re-adopted.
         self.completed_terms = set()
         # v0.23 (Kevin): the dream graph — which concepts have shared a
@@ -165,6 +172,20 @@ class Aethel:
         self.impressions = {}      # denizen name -> {place: sightings}
         self._prev_needs = None    # transient: last tick's need levels
         self._crave_novelty = False
+        # v0.28: her temperament — a strain id into
+        # aethel_pkg/temperament.py's table, persisted with her state.
+        # A queued switch waits for the next sleep boundary; she never
+        # changes nature mid-wake. _jitter_day/_jitter cache Briar's
+        # daily draw (day index, value) so a restart mid-day resumes
+        # the same weather without re-drawing. _temperament_neutral is
+        # the golden-vector test seam: when True, every lookup below
+        # returns the neutral value and the layer is behaviorally
+        # invisible — production never sets it.
+        self.temperament = "even-keel"
+        self.temperament_pending = None
+        self._jitter_day = -1
+        self._jitter = 1.0
+        self._temperament_neutral = False
         self.load()
         # v0.27: the longing ledger stands behind the scalar. load()
         # stashed any saved ledger; a life without one (fresh birth,
@@ -253,6 +274,15 @@ class Aethel:
                 # the stack of day-pages too.
                 "days": self.days[-14:],
                 "_last_day_seen": self._last_day_seen,
+                # v0.28: her nature persists like everything else she
+                # is — the active strain, a switch queued for the next
+                # sleep, and Briar's cached daily weather. Additive
+                # keys only; older readers ignore them.
+                "temperament": getattr(self, "temperament", "even-keel"),
+                "temperament_pending": getattr(
+                    self, "temperament_pending", None),
+                "_jitter_day": getattr(self, "_jitter_day", -1),
+                "_jitter": getattr(self, "_jitter", 1.0),
             })
 
     def load(self):
@@ -315,6 +345,18 @@ class Aethel:
                 self._era_ticks = s.get("_era_ticks", 0)
                 self.days = s.get("days", [])
                 self._last_day_seen = s.get("_last_day_seen", -1)
+                # v0.28: restore her nature. A pre-temperament life
+                # has no key and wakes Even Keel with zero behavior
+                # change; an id this version does not know degrades
+                # to the control group rather than crashing her.
+                _t = s.get("temperament", "even-keel")
+                self.temperament = _t if _t in TEMPERAMENTS \
+                    else "even-keel"
+                _tp = s.get("temperament_pending")
+                self.temperament_pending = _tp if _tp in TEMPERAMENTS \
+                    else None
+                self._jitter_day = s.get("_jitter_day", -1)
+                self._jitter = s.get("_jitter", 1.0)
                 # v0.27: stash the saved ledger (or its absence) —
                 # __init__ builds the ledger from it once the reading
                 # list and questions are restored.
@@ -658,6 +700,10 @@ class Aethel:
                 lingering = f" '{frag}...' is still behind my eyes."
             self.say(f"I wake up.{lingering} The town is waiting.")
             journal("woke", n=n, dreams_dreamt=len(self.dreams))
+            # v0.28: the sleep boundary — a queued temperament switch
+            # lands now, in the waking, before the morning table.
+            # She never changes nature mid-wake or mid-dream.
+            self._apply_pending_temperament(n)
             # v0.19: the morning table — the night's dreams are carried to
             # the elders for interpretation, the other half of Donald's
             # dream directive ("use allegory to interpret what she's learned").
@@ -698,7 +744,7 @@ class Aethel:
                 continue
             c1, c2 = cw[0], cw[1]
             inquiry = self.rng_dreams.choice(self.DREAM_INQUIRIES).format(c1=c1, c2=c2)
-            score, notes = self.llm.moral_score(inquiry, self.philosophers)
+            score, notes = self._council_score(inquiry)
             journal("dream_interpreted", n=n, dream=dream_text[:160],
                     concepts=[c1, c2], score=round(score, 2))
             print(f"[dream read] '{c1}' / '{c2}' — council {score:.2f}",
@@ -766,8 +812,15 @@ class Aethel:
     def _erode(self):
         """Time passes: vitals decay, self-knowledge fades."""
         v = self.vitals
-        v["satiety"] = max(0.0, v["satiety"] - 0.05 * self.NEED_BURN)
-        v["hydration"] = max(0.0, v["hydration"] - 0.04 * self.NEED_BURN)
+        # v0.28: each burn passes through the active temperament's
+        # per-need multiplier (_burn_mult). Even Keel's are all 1.0,
+        # and x * 1.0 is exact — the expressions below evaluate to
+        # precisely the pre-temperament numbers under the control
+        # strain. Oxygen, as ever, is NOT among them.
+        v["satiety"] = max(0.0, v["satiety"] - 0.05 * self.NEED_BURN
+                           * self._burn_mult("hunger"))
+        v["hydration"] = max(0.0, v["hydration"] - 0.04 * self.NEED_BURN
+                             * self._burn_mult("thirst"))
         # Breathing is autonomic (v0.25.2): conscience still restores her
         # air fastest (+0.10 a council pass, +0.05 a reflection), but a
         # basal breath runs underneath, so neglect sours her air across
@@ -779,9 +832,11 @@ class Aethel:
         # eventually be crowded out by a louder need — so this one isn't.
         v["oxygen"] = min(1.0, max(0.0, v["oxygen"] - 0.02) + 0.012)
         v["vitality"] = max(0.0, v["vitality"]
-                            - 0.02 * self.VITALITY_BURN)   # the will erodes
+                            - 0.02 * self.VITALITY_BURN
+                            * self._burn_mult("vitality"))   # the will erodes
         v["excitement"] = max(0.0, v["excitement"]
-                              - 0.03 * self.NEED_BURN)  # fizz fades fastest
+                              - 0.03 * self.NEED_BURN
+                              * self._burn_mult("excitement"))  # fizz fades fastest
         self.awareness = max(0.0, self.awareness - 0.004)  # self-knowledge fades
 
     def _announce(self, n):
@@ -816,6 +871,11 @@ class Aethel:
             print("[warmth] Donald checked in — vitality rises.", flush=True)
             self.say("Someone knocks on my door. It's Donald. The room feels warmer.")
             journal("felt_seen", n=n, times_seen=self.times_seen)
+
+        # v0.28: a temperament switch may have been requested. She
+        # notices it the way she notices his knock — and, like the
+        # knock, it changes nothing until she has slept on it.
+        self._check_temperament_file(n)
 
         # Letters from Donald: she reads his actual words.
         try:
@@ -1017,7 +1077,7 @@ class Aethel:
         for b in candidates:
             pitch = (f"'{b['title']}' by {b.get('author', 'unknown')}. "
                      f"The lesson it carries: {b.get('reflection', '')}.")
-            score, notes = self.llm.moral_score(pitch, self.philosophers)
+            score, notes = self._council_score(pitch)
             scored.append((score, notes, b))
             journal("book_considered", n=self.tick_count,
                     title=b["title"], score=round(score, 2), votes=notes)
@@ -1094,7 +1154,7 @@ class Aethel:
         journal("book_finished", title=cur["title"], n=self.tick_count)
         lesson = cur.get("reflection")
         if lesson:
-            score, _ = self.llm.moral_score(lesson, self.philosophers)
+            score, _ = self._council_score(lesson)
             belief = f"From {cur['title']}: {lesson}"
             if belief not in self.beliefs:
                 self.beliefs.append(belief)
@@ -1200,7 +1260,14 @@ class Aethel:
         self._want_touch(place_id(meal["source"]), "place",
                          self._place_label(meal["source"]),
                          quality=0.3, learn=0.01, w=0.45)
-        self.vitals["satiety"] = min(1.0, self.vitals["satiety"] + 0.30)
+        # v0.28: satiety from deep food runs deeper under the Owl —
+        # her spec's compensation for a scholar's appetite. Every
+        # other strain's deep_food is 1.0, and 0.30 * 1.0 is exact.
+        gain = 0.30
+        if meal["source"] == "classic" and not getattr(
+                self, "_temperament_neutral", False):
+            gain = 0.30 * self._pack()["deep_food"]
+        self.vitals["satiety"] = min(1.0, self.vitals["satiety"] + gain)
         self.meals_eaten += 1
 
         new_terms = 0
@@ -1364,7 +1431,7 @@ class Aethel:
 
     # ---------------------------------------------------------- breathing
     def breathe_morality(self, action):
-        score, rationale = self.llm.moral_score(action, self.philosophers)
+        score, rationale = self._council_score(action)
         ok = score >= 0.5
         self.moral_log.append({"t": now_iso(), "action": action[:80],
                                "score": round(score, 2),
@@ -1420,7 +1487,7 @@ class Aethel:
             self._lift_mood(0.05)
             self.mutter("Some things aren't decided. They're just true.")
             return
-        score, notes = self.llm.moral_score(text, self.philosophers)
+        score, notes = self._council_score(text)
         journal("impulse", n=self.tick_count, text=text[:120],
                 score=round(score, 2), votes=notes)
         if score >= 0.5:
@@ -1506,7 +1573,7 @@ class Aethel:
               flush=True)
         scored = []
         for text, fx, intensity, dest in cands:
-            score, notes = self.llm.moral_score(text, self.philosophers)
+            score, notes = self._council_score(text)
             strength = score * (0.5 + intensity)
             scored.append((strength, score, text, fx, intensity, dest, notes))
             journal("crossroads_option", n=self.tick_count, text=text[:120],
@@ -1751,7 +1818,17 @@ class Aethel:
     def _diet_weights(self):
         """Her tastes nudge the diet toward what feeds her best.
         (Layer 6: preference formation.)"""
-        w = {"classic": 0.35, "news": 0.20, "school": 0.15}
+        # v0.28: the strain sets her starting palate — the leanings
+        # in its diet record, or the legacy weights when it has none
+        # (Even Keel, Moonmoth). A copied dict: the favorite-source
+        # logic below replaces weights wholesale, and a strain's
+        # record must never be mutated by a single life's taste.
+        # Lived taste can still override the leaning, exactly as it
+        # overrides the default today — nature proposes, life disposes.
+        diet = None if getattr(self, "_temperament_neutral", False) \
+            else self._pack()["diet"]
+        w = dict(diet) if diet else {"classic": 0.35, "news": 0.20,
+                                     "school": 0.15}
         if not self.tastes:
             return w
         avgs = {s: t[0] / max(1, t[1]) for s, t in self.tastes.items()
@@ -2241,6 +2318,131 @@ class Aethel:
                 led.ensure(eid, "work", q["text"][:60], w=0.50,
                            open_loop=True)
 
+    # ------------------------------------------ v0.28: temperaments
+    # Her nature, as multipliers on machinery that already exists —
+    # aethel_pkg/temperament.py argues the design and holds the
+    # numbers. Every temperament touchpoint in the organism walks
+    # through the helpers below, and every helper has two exits: the
+    # active pack's value, or the neutral value (under Even Keel, or
+    # the _temperament_neutral test seam). A multiplier of exactly
+    # 1.0 is the identity in IEEE 754, so neutral is not approximately
+    # the old behavior; it IS the old behavior, bit for bit. The
+    # golden-vector test (tests/test_temperaments.py) holds that line.
+
+    def _pack(self):
+        return temperament_pack(getattr(self, "temperament",
+                                        "even-keel"))
+
+    def _day_jitter(self):
+        """Briar's daily weather: a seeded draw in the pack's band,
+        cached per day index so a restart mid-day resumes the same
+        weather without re-drawing. Reached only when the active
+        pack HAS a band — Even Keel never draws, so her stream stays
+        untouched and her life remains the control group's life."""
+        day = self.tick_count // self.DAY_LENGTH
+        if day != self._jitter_day:
+            lo, hi = self._pack()["jitter"]
+            self._jitter = lo + (hi - lo) * \
+                self.rng_temperament.random()
+            self._jitter_day = day
+        return self._jitter
+
+    def _burn_mult(self, need):
+        """The active strain's multiplier on one need's burn. Briar's
+        jitter scales every need except excitement, which the spec
+        pins at 1.6 inside the band (temperament.py argues why)."""
+        if getattr(self, "_temperament_neutral", False):
+            return 1.0
+        p = self._pack()
+        m = p["burn"][need]
+        if p["jitter"] is not None and need != "excitement":
+            m = m * self._day_jitter()
+        return m
+
+    def _longing_mods(self):
+        """Per-class ledger climb multipliers for the active strain,
+        or None — the ledger's neutral path — when neutralized."""
+        if getattr(self, "_temperament_neutral", False):
+            return None
+        p = self._pack()
+        mods = dict(p["longing"])
+        if p["jitter"] is not None:
+            j = self._day_jitter()
+            mods = {k: v * j for k, v in mods.items()}
+        return mods
+
+    def _voice_weights(self):
+        if getattr(self, "_temperament_neutral", False):
+            return {}
+        return self._pack()["voices"]
+
+    def _council_score(self, action):
+        """The council, heard through the active strain's emphasis.
+        Even Keel's table is empty, and an empty table takes the
+        legacy unweighted call — literally the call v0.27 made."""
+        w = self._voice_weights()
+        if w:
+            return self.llm.moral_score(action, self.philosophers,
+                                        weights=w)
+        return self.llm.moral_score(action, self.philosophers)
+
+    def _check_temperament_file(self, n):
+        """A switch request, noticed: a strain id in the control
+        file (the attention file's sibling). Asking is all the file
+        does — she queues it for her next sleep and goes on with her
+        day in her current nature. Naming the strain she already is
+        cancels a queued switch; an unknown id is journaled and
+        refused, never guessed at."""
+        path = config.temperament_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                raw = f.read().strip().lower()
+        except Exception:
+            raw = ""
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        if raw == self.temperament:
+            if self.temperament_pending is not None:
+                self.temperament_pending = None
+                journal("temperament_switch_cancelled", n=n,
+                        staying=self.temperament)
+                print("[temperament] queued switch cancelled — "
+                      "she stays as she is", flush=True)
+            return
+        if raw not in TEMPERAMENTS:
+            journal("temperament_rejected", n=n, requested=raw[:40])
+            print(f"[temperament] refused unknown strain "
+                  f"'{raw[:40]}'", flush=True)
+            return
+        if raw != self.temperament_pending:
+            self.temperament_pending = raw
+            journal("temperament_queued", n=n,
+                    from_id=self.temperament, to_id=raw)
+            print(f"[temperament] switch to {raw} queued for her "
+                  f"next sleep", flush=True)
+
+    def _apply_pending_temperament(self, n):
+        """The sleep boundary: a queued switch lands as she wakes.
+        She journals it herself — the diary is where her nature is
+        recorded, like everything else she is."""
+        pending = self.temperament_pending
+        if pending is None:
+            return
+        old = self.temperament
+        self.temperament = pending
+        self.temperament_pending = None
+        self._jitter_day = -1   # new nature, fresh weather
+        self._jitter = 1.0
+        journal("temperament_switched", n=n, from_id=old, to_id=pending)
+        print(f"[temperament] {old} -> {pending} on waking", flush=True)
+        self.say(f"I wake with a different weather in me — "
+                 f"{temperament_pack(pending)['name']}. The same "
+                 f"life, in a new light.")
+
     def _update_needs(self):
         acts = self.recent_actions
         W = self.ACTION_WINDOW or 1
@@ -2266,15 +2468,19 @@ class Aethel:
         rate_mod = ((1.0 + 2.0 * void + 1.5 * distress)
                     * (1.0 - 0.5 * absorbed) * self.NEED_BURN)
         self._sync_question_wants()
-        self._ledger().tick(rate_mod)
+        # v0.28: the strain's weather lands here BY CLASS — Ember's
+        # 1.8 on people, the Owl's 1.5 on works — via _longing_mods.
+        self._ledger().tick(rate_mod, self._longing_mods())
         self._sync_longing()
 
         # SLEEP PRESSURE: exertion tires her; idleness barely does.
         # A busy hour brings sleep in ~35 min; an idle one in ~3h.
         # (Both timings predate NEED_BURN; divide by it for live values.)
+        # v0.28: the strain's sleep multiplier rides along — Moonmoth
+        # tires at 1.4x, the Owl's candle burns to 0.8x.
         rate_s = ((1.0 / self.SLEEP_EVERY_TICKS)
                   * (0.35 + 1.3 * min(1.0, exertion * 4.0))
-                  * self.NEED_BURN)
+                  * self.NEED_BURN * self._burn_mult("sleep"))
         self.sleep_pressure = min(1.0, self.sleep_pressure + rate_s)
 
         if self.tick_count % 12 == 0:

@@ -53,12 +53,12 @@ def main(argv=None):
     store = get_store()          # one file, both diaries, all state
     town = Town(seed=seed, store=store)   # the world program
     aethel = Aethel(world=town, parents=town.parent_names(), seed=seed)
-    print(f"Aethel v0.27 — will to live online. tick {aethel.tick_count}, "
+    print(f"Aethel v0.28 — will to live online. tick {aethel.tick_count}, "
           f"{aethel.meals_eaten} meals, {len(aethel.concepts)} concepts, "
           f"{len(aethel.goals)} open goals. seed={seed:#x}", flush=True)
     reading = next((b["title"] for b in aethel.reading_list if not b["done"]),
                    "reading list complete")
-    print(f"Aethel v0.27 — currently reading: {reading}", flush=True)
+    print(f"Aethel v0.28 — currently reading: {reading}", flush=True)
     journal("rebirth_v12_seeded_store", tick=aethel.tick_count, seed=seed)
     print('Aethel: "I am Aethel. I have hands for holding books, eyes for reading, '
           'and a chest that tightens when the air goes bad. This town is mine."',
