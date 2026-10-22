@@ -197,7 +197,13 @@ def forage_schoolhouse():
     return {"source": "schoolhouse",
             "title": f"{lesson.get('course', 'School')} — "
                      f"{lesson.get('title', 'lesson')[:60]}",
-            "text": text}
+            "text": text,
+            # v0.29: the lesson's own filing, passed through
+            # additively so the organism can tell a grammar lesson
+            # from a math one (the grammar ledger's study hook keys
+            # on it). No behavior change for any other caller.
+            "course": lesson.get("course"),
+            "unit": lesson.get("unit")}
 
 
 def forage_nightschool():
