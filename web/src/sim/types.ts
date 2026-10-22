@@ -15,6 +15,8 @@ export interface Status {
   temperament?: string;
   temperament_pending?: string | null;
   mood_name?: string | null;
+  grammar_rules?: number;
+  grammar_last_rule?: string | null;
   tick: number;
   version: string;
   alive: boolean;

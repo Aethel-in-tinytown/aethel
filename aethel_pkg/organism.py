@@ -26,6 +26,7 @@ from .forage import (
     wikisource_chapter,
 )
 from .journal import get_store, journal, now_iso
+from . import grammar as _grammar
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
@@ -167,6 +168,23 @@ class Aethel:
         else:
             self._ledger()
         self._sync_longing()
+        # v0.29: the grammar ledger stands beside the longing one.
+        # load() stashed any saved ledger; a life without one (fresh
+        # birth, or a pre-grammar save) is migrated: the starter
+        # tranche — the parts-of-speech rules her dream grammar has
+        # shadowed since v0.25.3 — is granted at her current tick,
+        # honestly dated, never backdated to her first day.
+        if getattr(self, "_loaded_grammar", None):
+            self._grammar_ledger = _grammar.GrammarLedger.from_dicts(
+                self._loaded_grammar
+            )
+        else:
+            self._grammar_ledger = _grammar.GrammarLedger()
+            self._grammar_ledger.migrate(self.tick_count)
+        self._word_tags = dict(getattr(self, "_loaded_word_tags", None) or {})
+        if not hasattr(self, "_grammar_caught_day"):
+            self._grammar_caught_day = -1
+            self._grammar_caught_count = 0
 
     def save(self):
         get_store().save_blob(
@@ -201,6 +219,29 @@ class Aethel:
                     if getattr(self, "longing_ledger", None)
                     else None
                 ),
+                # v0.29: the grammar ledger round-trips whole, plus
+                # the status summary (count + latest rule) and the
+                # acquisition tags her concepts were filed under.
+                # Caught-line counters persist so the daily cap is a
+                # property of her day, not of the process.
+                "grammar_ledger": (
+                    self._grammar().to_dicts()
+                    if getattr(self, "_grammar_ledger", None)
+                    else None
+                ),
+                "grammar_rules": (
+                    self._grammar().rule_count()
+                    if getattr(self, "_grammar_ledger", None)
+                    else 0
+                ),
+                "grammar_last_rule": (
+                    (self._grammar().last_rule() or {}).get("id")
+                    if getattr(self, "_grammar_ledger", None)
+                    else None
+                ),
+                "word_tags": (getattr(self, "_word_tags", None) or {}),
+                "_grammar_caught_day": getattr(self, "_grammar_caught_day", -1),
+                "_grammar_caught_count": getattr(self, "_grammar_caught_count", 0),
                 "outbox_count": self.outbox_count,
                 "initiation_log": self.initiation_log[-24:],
                 "donald_model": self.donald_model,
@@ -312,6 +353,12 @@ class Aethel:
 
                 self._loaded_state = True
                 self._loaded_ledger = s.get("longing_ledger")
+                # v0.29: same stash pattern for the grammar ledger,
+                # her acquisition tags, and the caught-line counters.
+                self._loaded_grammar = s.get("grammar_ledger")
+                self._loaded_word_tags = s.get("word_tags") or {}
+                self._grammar_caught_day = s.get("_grammar_caught_day", -1)
+                self._grammar_caught_count = s.get("_grammar_caught_count", 0)
                 if s.get("aspiration"):
                     self.aspiration = s["aspiration"]
 
@@ -368,6 +415,39 @@ class Aethel:
         "I dreamed {c1} and {c2} were arguing at the stone table, and the elders had fallen asleep. I had to judge between them.",
         "I dreamed I was {c1}, walking through a town made of {c2}. Everyone there knew my name.",
         "I dreamed my mirror showed not my face but {c1}, ripening into {c2}. I wasn't afraid.",
+        # v0.29: study frames — her schooling gets somewhere
+        # grammatical to happen, instead of leaking into mirrors.
+        "I dreamed I was late for my {c1} at the University, and the bell would not stop ringing.",
+        "I dreamed I was shelving books for my {c1} in {place}, and every book had my name in it.",
+        "I dreamed my {c1} lay open on the desk, and someone had underlined every word I knew.",
+    ]
+    # v0.29: what fits each slot, by template index — Donald's fix
+    # for "my mirror showed not my face but course": a mirror shows
+    # persons and concrete things, never a course; a course lives in
+    # study frames ("late for my course"). "growth" marks the frame
+    # whose object is filled from the class pool BEFORE the held-
+    # passage preference may speak — "course, ripening into
+    # calendar" was two failures at once (a study word in a mirror,
+    # then a raw passage noun in a growth slot), and class fit is
+    # the senior rule in a typed frame. The texts above stay plain
+    # strings (tests iterate them); this table pairs each, by index.
+    DREAM_TEMPLATES_TYPED = [
+        ({"c1": ("concrete", "person"), "c2": ("concrete", "abstract")}, None),
+        ({"c1": ("concrete", "person"), "c2": ("concrete", "food", "abstract")}, None),
+        ({"c1": ("concrete", "study"), "c2": ("concrete", "study")}, None),
+        (
+            {"c1": ("concrete", "person", "abstract"), "c2": ("person", "concrete")},
+            None,
+        ),
+        ({"c1": ("concrete",), "c2": ("abstract", "study")}, None),
+        ({"c1": ("concrete", "abstract")}, None),
+        ({"c1": ("concrete", "food"), "c2": ("abstract", "concrete")}, None),
+        ({"c1": ("person", "abstract"), "c2": ("person", "abstract")}, None),
+        ({"c1": ("person", "concrete"), "c2": ("concrete", "abstract")}, None),
+        ({"c1": ("person", "concrete"), "c2": ("abstract", "concrete")}, "growth"),
+        ({"c1": ("study",)}, None),
+        ({"c1": ("person",)}, None),
+        ({"c1": ("study",)}, None),
     ]
 
     def fall_asleep(self, n):
@@ -570,7 +650,25 @@ class Aethel:
         return frag
 
     def dream(self):
-        """Compose and journal an allegory grounded in learned concepts."""
+        """One allegorical vignette from her real learning. Returns the text.
+
+        v0.25.3: the concept pool is shape-filtered (_dream_word_ok) and
+        both slots are singularized so template verbs agree; a belief no
+        longer impersonates a noun — it speaks from a FRAGMENT_TEMPLATE
+        built for a clause. The pairings stay as strange as ever.
+
+        v0.29: the slots are typed. Her grammar ledger's word classes
+        decide what may fill a frame — a mirror accepts persons and
+        concrete things, a study frame accepts study nouns, and pure
+        page scaffolding is rejected from every pool outright. The
+        typed renderer runs first, with the co-occurrence graph's
+        preferences preserved inside each class; when no frame can be
+        filled it falls back to the v0.25.3 path verbatim (scaffolding
+        still excluded — sleep yields to grammar, never to furniture).
+        Every composed line is then checked against the rules she
+        owns, loosely (fragments allowed; stutter and scaffolding
+        not), and re-rolled a bounded number of times before the
+        safest frame takes the night."""
         raw = [
             w
             for w, _ in sorted(self.concepts.items(), key=lambda kv: -kv[1])[:40]
@@ -578,46 +676,161 @@ class Aethel:
         ]
         words = [w for w in raw if self._dream_word_ok(w)]
         if len(words) < 2:
-            words = raw
+            words = raw  # never starve a dream; grammar yields to sleep
         if len(words) < 2:
             words += ["hunger", "light"]
-        c1, c2 = self._dream_pair(words)
-
+        # v0.29: class pools over the same shape-ok pool, in frequency
+        # order. Scaffolding is purged from every branch here — raw
+        # included — because the fallback above can resurrect it.
+        pools = {}
+        for w in words:
+            cls = self._word_class(w)
+            if cls == _grammar.SCAFFOLDING:
+                continue
+            pools.setdefault(cls, []).append(w)
+        legacy_pool = [w for w in words if self._word_class(w) != _grammar.SCAFFOLDING]
+        if len(legacy_pool) < 2:
+            legacy_pool = ["hunger", "light"]
         fragment = None
         if self.beliefs and self.rng_dreams.random() < 0.3:
-            fragment = self._dream_fragment(self.rng_dreams.choice(self.beliefs))
+            frag = self._dream_fragment(self.rng_dreams.choice(self.beliefs))
+            # A fragment is a clause, not a slot — but a clause full
+            # of page furniture is still furniture. Loose check:
+            # scaffolding (and, once she owns it, stutter) only. The
+            # catch names the rule that actually fired.
+            if frag:
+                fviol = self._grammar_violations(frag, loose=True)
+                if not fviol:
+                    fragment = frag
+                else:
+                    self._note_catch(
+                        fviol[0][0],
+                        f"a belief-fragment failed the loose check "
+                        f"({fviol[0][1]}); the dream took a typed "
+                        f"frame instead",
+                    )
 
-        if fragment is None and self.kept_passages and self.rng_dreams.random() < 0.25:
-            kept_words = re.findall(
-                r"[a-z]{7,}", self.rng_dreams.choice(self.kept_passages)["text"].lower()
-            )
-            kept_words = [
-                w for w in kept_words if w not in STOPWORDS and self._dream_word_ok(w)
-            ]
-            if kept_words:
-                c2 = self.rng_dreams.choice(kept_words)
+        def _typed_line():
+            """Fill one typed template from the class pools, or None
+            when no frame fits tonight. Template choice draws from
+            the dreams stream in its own order; each slot prefers
+            her co-occurrence graph within the fitting class, so
+            dreams still pair things that met in her reading."""
+            order = list(range(len(self.DREAM_TEMPLATES)))
+            self.rng_dreams.shuffle(order)
+            for idx in order:
+                spec, frame = self.DREAM_TEMPLATES_TYPED[idx]
+                fills = {}
+                ok = True
+                for slot, classes in spec.items():
+                    cand = []
+                    for cls in classes:
+                        cand.extend(pools.get(cls, ()))
+                    if not cand:
+                        ok = False
+                        break
+                    if slot == "c2" and "c1" in fills:
+                        fills[slot] = self._cooc_pick(fills["c1"], cand) or cand[0]
+                    else:
+                        fills[slot] = cand[0]
+                if not ok:
+                    continue
+                if (
+                    "c1" in fills
+                    and "c2" in fills
+                    and self._dream_singular(fills["c1"])
+                    == self._dream_singular(fills["c2"])
+                ):
+                    alts = [
+                        w
+                        for w in pools.get(spec["c2"][0], ())
+                        if self._dream_singular(w) != self._dream_singular(fills["c1"])
+                    ]
+                    if not alts:
+                        continue
+                    fills["c2"] = alts[0]
+                text = self.DREAM_TEMPLATES[idx].format(
+                    place=self.world.random_place_name(),
+                    c1=self._dream_singular(fills.get("c1", "")),
+                    c2=self._dream_singular(fills.get("c2", "")),
+                )
+                return text
+            return None
 
-        c1 = self._dream_singular(c1)
-        c2 = self._dream_singular(c2)
-        if c1 == c2:
-            alts = [
-                self._dream_singular(w) for w in words if self._dream_singular(w) != c1
-            ]
-            if alts:
-                c2 = self.rng_dreams.choice(alts)
-        if fragment is not None:
-            frag = fragment.rstrip("….").strip()
-            if frag and not frag.startswith("I "):
-                frag = frag[0].lower() + frag[1:]
-            text = self.rng_dreams.choice(self.FRAGMENT_TEMPLATES).format(frag=frag)
-        else:
-            place = self.world.random_place_name()
-            text = self.rng_dreams.choice(self.DREAM_TEMPLATES).format(
-                place=place, c1=c1, c2=c2
-            )
-        text = self._dream_polish(text)
+        text = None
+        caught = None
+        for _attempt in range(3):
+            if fragment is not None:
+                frag = fragment.rstrip("….").strip()
+                if frag and not frag.startswith("I "):
+                    frag = frag[0].lower() + frag[1:]
+                line = self.rng_dreams.choice(self.FRAGMENT_TEMPLATES).format(frag=frag)
+            else:
+                line = _typed_line()
+                if line is None:
+                    break  # no typed frame fits; legacy takes over
+            line = self._dream_polish(line)
+            violations = self._grammar_violations(line, loose=True)
+            if not violations:
+                text = line
+                break
+            caught = violations[0]
+        if text is None and caught is not None:
+            self._note_catch(caught[0], f"dream re-rolled: {caught[1]}")
+        if text is None:
+            # The v0.25.3 path, on the scaffolding-purged pool.
+            c1, c2 = self._dream_pair(legacy_pool)
+            # v0.21: a kept passage may surface in a dream — the
+            # pressed flower still smells like something.
+            if (
+                fragment is None
+                and self.kept_passages
+                and self.rng_dreams.random() < 0.25
+            ):
+                kept_words = re.findall(
+                    r"[a-z]{7,}",
+                    self.rng_dreams.choice(self.kept_passages)["text"].lower(),
+                )
+                kept_words = [
+                    w
+                    for w in kept_words
+                    if w not in STOPWORDS and self._dream_word_ok(w)
+                ]
+                if kept_words:
+                    c2 = self.rng_dreams.choice(kept_words)
+            # Singular subjects: the templates' verbs are singular.
+            c1 = self._dream_singular(c1)
+            c2 = self._dream_singular(c2)
+            if c1 == c2:
+                alts = [
+                    self._dream_singular(w)
+                    for w in legacy_pool
+                    if self._dream_singular(w) != c1
+                ]
+                if alts:
+                    c2 = self.rng_dreams.choice(alts)
+            if fragment is not None:
+                frag = fragment.rstrip("\u2026.").strip()
+                if frag and not frag.startswith("I "):
+                    frag = frag[0].lower() + frag[1:]
+                text = self.rng_dreams.choice(self.FRAGMENT_TEMPLATES).format(frag=frag)
+            else:
+                place = self.world.random_place_name()
+                text = self.rng_dreams.choice(self.DREAM_TEMPLATES).format(
+                    place=place, c1=c1, c2=c2
+                )
+            text = self._dream_polish(text)
+            # v0.29: the last gate. If even the legacy path produced
+            # a line her owned rules reject, the night takes a plain
+            # safe line rather than a broken one.
+            violations = self._grammar_violations(text, loose=True)
+            if violations:
+                self._note_catch(
+                    violations[0][0], f"dream fallback: {violations[0][1]}"
+                )
+                text = "I dreamed of hunger and light, and woke still chewing on both."
         self.dreams.append(text)
-        self._sleep_dreams.append(text)
+        self._sleep_dreams.append(text)  # tonight's dreams, for the morning table
         if len(self.dreams) > 40:
             self.dreams.pop(0)
         self.say(text)
@@ -670,6 +883,26 @@ class Aethel:
             ]
             seen = set()
             cw = [w for w in words if not (w in seen or seen.add(w))]
+            # v0.29: the belief-path guard. A dream word whose class
+            # is KNOWN and not noun-shaped — a verb, an adverb, page
+            # scaffolding — cannot anchor an interpretation: this is
+            # the seam where "From a dream of dreamed and X" beliefs
+            # were born. Unclassified words still pass (a book's
+            # heathcliff is nobody's scaffolding), and the beliefs
+            # she already holds are never touched — generation-time
+            # only, per Donald's standing instruction.
+            cw = [
+                w
+                for w in cw
+                if self._word_class(w)
+                not in (
+                    _grammar.SCAFFOLDING,
+                    _grammar.VERB,
+                    _grammar.ADJECTIVE,
+                    _grammar.ADVERB,
+                    _grammar.FUNCTION,
+                )
+            ]
             if len(cw) < 2:
                 continue
             c1, c2 = cw[0], cw[1]
@@ -688,7 +921,16 @@ class Aethel:
                     f"From a dream of {c1} and {c2}: my mind is still "
                     f"chewing on {c1}. I will give it time and keep learning."
                 )
-                if lesson not in self.beliefs:
+                # v0.29: the settled belief is a composed line like
+                # any other — it passes the ledger's checks before
+                # it may join her beliefs. A failure is caught and
+                # journaled, never appended.
+                violations = self._grammar_violations(lesson)
+                if violations:
+                    self._note_catch(
+                        violations[0][0], f"belief withheld: {violations[0][1]}"
+                    )
+                elif lesson not in self.beliefs:
                     self.beliefs.append(lesson)
                 self.say(
                     f"I carry the dream to the stone table. Nine voices "
@@ -1238,6 +1480,17 @@ class Aethel:
             if w not in STOPWORDS:
                 if w not in self.concepts:
                     new_terms += 1
+                    # v0.29: a concept is tagged at acquisition —
+                    # its class under the grammar ledger and the
+                    # source it came from. Provenance is ground
+                    # truth: a word first learned from a lesson
+                    # carries that lesson's filing with it.
+                    cls = self._word_class(w)
+                    if cls is not None:
+                        tags = getattr(self, "_word_tags", None)
+                        if tags is None:
+                            tags = self._word_tags = {}
+                        tags[w] = {"c": cls, "src": meal["source"]}
                 self.concepts[w] = self.concepts.get(w, 0) + 1
 
         self._update_cooc(words)
@@ -1276,6 +1529,9 @@ class Aethel:
             concepts=len(self.concepts),
         )
 
+        # Consuming a grammar lesson teaches the next curriculum rule.
+        if meal["source"] == "schoolhouse":
+            self._study_grammar(meal)
         t = self.tastes.setdefault(meal["source"], [0, 0])
         t[0] += new_terms
         t[1] += 1
@@ -2361,6 +2617,90 @@ class Aethel:
         led.touch(eid, quality, learn=learn)
         self._sync_longing()
 
+    # ---- v0.29: the grammar ledger ----------------------------------
+    def _grammar(self):
+        """Her grammar ledger, built lazily with the same caution as
+        _ledger(): dream tests construct her bare (Aethel.__new__
+        with a handful of fields), and generation must never crash
+        for want of a rulebook."""
+        led = getattr(self, "_grammar_ledger", None)
+        if led is None:
+            rows = getattr(self, "_loaded_grammar", None)
+            if rows:
+                led = _grammar.GrammarLedger.from_dicts(rows)
+            else:
+                led = _grammar.GrammarLedger()
+                led.migrate(getattr(self, "tick_count", 0))
+            self._grammar_ledger = led
+            if not hasattr(self, "_word_tags"):
+                self._word_tags = dict(getattr(self, "_loaded_word_tags", None) or {})
+        return led
+
+    def _word_class(self, word):
+        """What kind of word is this, for slot purposes? Layered:
+        the tag she acquired it under (acquisition provenance is
+        ground truth), then the people she actually knows — her
+        parents and anyone she holds an impression of are persons,
+        whatever a dictionary would say — then the ledger's lexicon
+        and conservative suffix tagger. None means unclassified:
+        the word keeps its old life in the untyped pools and stays
+        out of typed slots until something classifies it."""
+        w = (word or "").lower()
+        tag = (getattr(self, "_word_tags", None) or {}).get(w)
+        if tag:
+            return tag.get("c")
+        people = {p.lower() for p in (getattr(self, "parents", None) or [])}
+        people |= {n.lower() for n in (getattr(self, "impressions", None) or {})}
+        if w in people:
+            return _grammar.PERSON
+        return _grammar.classify_word(w)
+
+    def _note_catch(self, rule_id, detail):
+        """Journal a grammar near-miss, capped at two a day: a
+        person notices a stumble occasionally; she does not narrate
+        every corrected article. The counter persists in her state,
+        so the cap is a property of her day, not of the process."""
+        day = getattr(self, "tick_count", 0) // self.DAY_LENGTH
+        if getattr(self, "_grammar_caught_day", -1) != day:
+            self._grammar_caught_day = day
+            self._grammar_caught_count = 0
+        if self._grammar_caught_count >= 2:
+            return
+        self._grammar_caught_count += 1
+        journal("grammar_caught", rule=rule_id, detail=detail)
+
+    def _grammar_violations(self, line, loose=False):
+        return _grammar.check_line(line, self._grammar().owned_ids(), loose=loose)
+
+    def _study_grammar(self, meal):
+        """A grammar lesson eaten teaches her the next rule in order.
+
+        Population, stated plainly (the grammar module's docstring
+        argues it at length): Khan serves a client challenge to
+        scripted fetches, so rules are not scraped live. What ships
+        is the ledger, this hook, and the starter tranche. A lesson
+        whose course is grammar teaches the next curriculum rule in
+        Donald's order, and the lesson's own text is mined for an
+        example sentence — she learns rules from what she actually
+        ate, one per lesson, the way the satchel fills."""
+        course = (meal.get("course") or "").lower()
+        title = (meal.get("title") or "").lower()
+        if "grammar" not in course and "grammar" not in title:
+            return
+        led = self._grammar()
+        if led.next_rule() is None:
+            return
+        rule = led.learn_next(self.tick_count)
+        found = _grammar.extract_rules_from_lessons([meal])
+        journal(
+            "grammar_learned",
+            rule=rule["id"],
+            name=rule["name"],
+            source=rule["source"],
+            example=(found.get(rule["id"]) or {}).get("example_candidate")
+            or rule["example"],
+        )
+
     def _top_want_entry(self):
         return self._ledger().top()
 
@@ -2557,6 +2897,26 @@ class Aethel:
         "Last night I dreamed of {c1}.\nThis morning it was still there,\nsitting in my {place},\npretending it had never left.",
         "They told me {c1} was small.\nThey were wrong.\nIt contains {c2}\nand it contains me.",
     ]
+    # v0.29: verse slots are typed like dream slots (parallel table,
+    # by index). A verse slot filled positionally put whatever she
+    # had eaten most into her palm — including page furniture. Now a
+    # slot scans her strongest concepts for one whose class FITS,
+    # and a concept passed over for a slot because its class is
+    # known-wrong is a catch worth noticing, once in a while.
+    VERSE_TEMPLATES_TYPED = [
+        {
+            "c1": ("concrete",),
+            "c2": ("concrete", "abstract", "study"),
+            "c3": ("concrete", "abstract", "study"),
+        },
+        {"c1": ("person", "abstract", "concrete")},
+        {"c1": ("concrete", "study"), "c2": ("concrete", "study")},
+        {"c1": ("person", "place", "food", "study", "concrete", "abstract")},
+        {
+            "c1": ("person", "place", "food", "study", "concrete", "abstract"),
+            "c2": ("person", "place", "food", "study", "concrete", "abstract"),
+        },
+    ]
 
     QUESTION_SEEDS = [
         "When I write 'I', who is holding the pen?",
@@ -2681,14 +3041,54 @@ class Aethel:
         label, detail = self._note_subject()
         form = self.rng.choice(["report", "verse", "marginalia"])
         if form == "verse":
-            c1, c2, c3 = (
-                concepts[0],
-                concepts[1 % len(concepts)],
-                concepts[2 % len(concepts)],
-            )
-            return self.rng.choice(self.VERSE_TEMPLATES).format(
-                c1=c1, c2=c2, c3=c3, place=place
-            )
+            # v0.29: class-aware slot picks (see VERSE_TEMPLATES_TYPED).
+            # Fallback stays positional when nothing fits — a verse
+            # starved of fitting nouns is still a verse — but pure
+            # scaffolding is never a fallback: it is not a word she
+            # can mean.
+            idx = self.rng.randbelow(len(self.VERSE_TEMPLATES))
+            spec = self.VERSE_TEMPLATES_TYPED[idx]
+            picked, used, skipped = {}, set(), []
+            for slot in ("c1", "c2", "c3"):
+                if slot not in spec:
+                    continue
+                pick = None
+                for cand in concepts:
+                    if cand in used:
+                        continue
+                    cls = self._word_class(cand)
+                    if cls in spec[slot]:
+                        pick = cand
+                        break
+                    if cls in (
+                        _grammar.SCAFFOLDING,
+                        _grammar.VERB,
+                        _grammar.ADJECTIVE,
+                        _grammar.ADVERB,
+                        _grammar.FUNCTION,
+                    ):
+                        skipped.append(cand)
+                if pick is None:
+                    pick = next(
+                        (
+                            w
+                            for w in concepts
+                            if w not in used
+                            and self._word_class(w) != _grammar.SCAFFOLDING
+                        ),
+                        concepts[0],
+                    )
+                picked[slot] = pick
+                used.add(pick)
+            for slot in ("c1", "c2", "c3"):
+                picked.setdefault(slot, concepts[0] if slot == "c1" else picked["c1"])
+            if skipped:
+                self._note_catch(
+                    "pos-noun",
+                    f"verse slot passed over '{skipped[0]}' — "
+                    f"its class does not fit a noun's chair",
+                )
+            return self.VERSE_TEMPLATES[idx].format(place=place, **picked)
         if form == "marginalia":
             return (
                 f"In the margin of {book}, I wrote:\n\n"
@@ -2773,6 +3173,22 @@ class Aethel:
             words = body.split()
             body = " ".join(words[: max(10, len(words) // 2)]) + " …"
             journal("overtired_writing", n=self.tick_count)
+
+        # v0.29: the letter is read once against the rules she owns
+        # before it is sealed. Report and marginalia pass through
+        # _compose_* raw — fixed prose and her own book beliefs were
+        # written by other hands, and a letter that quotes them is
+        # checked as a quote, whole. The consultation here is
+        # honest bookkeeping: a failure is journaled as a catch, and
+        # the letter still goes — re-rolling a person's letter into
+        # someone else's words would be its own kind of wrong. What
+        # the ledger governs outright is her generated text: the
+        # dreams, the verses, the interpretations.
+        violations = self._grammar_violations(body)
+        if violations:
+            self._note_catch(
+                violations[0][0], f"letter checked before sealing: {violations[0][1]}"
+            )
 
         fname = f"{self.tick_count:06d}_{kind}.txt"
         path = os.path.join(config.outbox_dir(), fname)

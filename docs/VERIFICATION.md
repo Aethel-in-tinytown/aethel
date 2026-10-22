@@ -5,7 +5,7 @@ These results cover the self-hosted implementation, not an existing live service
 
 | Check | Result |
 | --- | --- |
-| Python regression and worker/API tests | 137 passed |
+| Python regression and worker/API tests | 164 passed after integrating upstream grammar changes |
 | Frontend domain tests | 31 passed |
 | TypeScript, ESLint, Prettier | Passed |
 | Python Ruff correctness and formatting | Passed |

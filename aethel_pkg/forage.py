@@ -197,6 +197,9 @@ def forage_schoolhouse():
         "title": f"{lesson.get('course', 'School')} — "
         f"{lesson.get('title', 'lesson')[:60]}",
         "text": text,
+        # Keep lesson provenance for curriculum-specific study hooks.
+        "course": lesson.get("course"),
+        "unit": lesson.get("unit"),
     }
 
 

@@ -288,6 +288,8 @@ class TestWorkerIntegration(unittest.TestCase):
                 self.assertEqual(duplicate["tick"], records[0]["tick"])
                 snapshot = gateway.view()
                 self.assertEqual(snapshot["tick"], snapshot["status"]["tick"])
+                self.assertGreaterEqual(snapshot["status"]["grammar_rules"], 5)
+                self.assertIsInstance(snapshot["status"]["grammar_last_rule"], str)
                 self.assertNotIn(command["text"], json.dumps(snapshot))
                 page = gateway.request("journal", {"limit": 2})
                 self.assertLessEqual(len(page["entries"]), 2)

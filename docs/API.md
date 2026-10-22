@@ -48,7 +48,8 @@ later learning and outgoing writing may reflect what she has read.
     },
     "meals_eaten": 8, "concepts": 20, "reading": "Frankenstein",
     "temperament": "even-keel", "temperament_pending": null,
-    "mood_name": "quiet", "top_want": null
+    "mood_name": "quiet", "top_want": null,
+    "grammar_rules": 5, "grammar_last_rule": "pos-adverb"
   },
   "town": { "places": [], "residents": [] },
   "journal": [], "journal_cursor": null, "letters": []

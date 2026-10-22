@@ -114,6 +114,8 @@ def build_snapshot(organism, town, store, revision):
             "temperament_pending": organism.temperament_pending,
             "mood_name": organism.mood_name,
             "top_want": state.get("top_want"),
+            "grammar_rules": state.get("grammar_rules", 0),
+            "grammar_last_rule": state.get("grammar_last_rule"),
         },
         "journal": recent["entries"],
         "journal_cursor": recent["next_cursor"],
