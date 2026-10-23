@@ -23,7 +23,7 @@ def _now_iso():
 DEFAULT_ROSTER = [
     (
         "John",
-        ["hackernews", "postbox"],
+        ["hackernews", "postbox", "restaurant"],
         "hackernews",
         {"wander": 0.10, "sociable": 0.9},
     ),
@@ -37,7 +37,7 @@ DEFAULT_ROSTER = [
     ),
     (
         "Trey",
-        ["hackernews", "postbox", "wikipedia"],
+        ["hackernews", "postbox", "wikipedia", "restaurant"],
         "postbox",
         {"wander": 0.35, "sociable": 0.6},
     ),

@@ -170,6 +170,16 @@ class Aethel:
             self.longing_ledger = WantLedger.from_dicts(self._loaded_ledger)
         else:
             self._ledger()
+        # v0.30: two new doors. A life saved before the Hotel and the
+        # Restaurant existed gains ledger entries for them here —
+        # additive, zero ache, the stock place weight — so her wants
+        # cover the whole town she can now walk. Fresh lives are
+        # seeded with them in _seed_longing_ledger; ensure() makes
+        # this a no-op there.
+        for key in ("hotel", "restaurant"):
+            self.longing_ledger.ensure(
+                place_id(key), "place", self._place_label(key), w=0.45
+            )
         self._sync_longing()
         # v0.29: the grammar ledger stands beside the longing one.
         # load() stashed any saved ledger; a life without one (fresh
@@ -1936,6 +1946,15 @@ class Aethel:
                     "hackernews",
                 )
             )
+            c.append(
+                (
+                    "walk to the Restaurant and sit among the clatter of "
+                    "plates and other people's evenings",
+                    {"longing": -0.3, "vitality": 0.02},
+                    self.longing,
+                    "restaurant",
+                )
+            )
         if self.sleep_pressure > 0.45:
             c.append(
                 (
@@ -2006,6 +2025,15 @@ class Aethel:
                     {"awareness": 0.02, "oxygen": 0.05},
                     need,
                     "classic",
+                )
+            )
+            c.append(
+                (
+                    "walk the Hotel's quiet corridor and wonder who will "
+                    "one day sleep in those rooms",
+                    {"awareness": 0.02, "vitality": 0.02},
+                    need,
+                    "hotel",
                 )
             )
         return c
@@ -2683,6 +2711,8 @@ class Aethel:
         "home": "my rooms above the Old Bookshop",
         "postbox": "the wooden postbox at the end of the lane",
         "cottage": "the little cottage at the edge of town",
+        "hotel": "the Hotel",
+        "restaurant": "the Restaurant",
     }
 
     def _place_label(self, key):
@@ -2702,7 +2732,13 @@ class Aethel:
         for name, w in people.items():
             led.ensure(person_id(name), "person", name, w=w)
         place_w = {"home": 0.50, "cottage": 0.55, "postbox": 0.40}
-        for key in list(self.SOURCE_NAMES) + ["home", "postbox", "cottage"]:
+        for key in list(self.SOURCE_NAMES) + [
+            "home",
+            "postbox",
+            "cottage",
+            "hotel",
+            "restaurant",
+        ]:
             led.ensure(
                 place_id(key), "place", self._place_label(key), w=place_w.get(key, 0.45)
             )

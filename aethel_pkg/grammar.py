@@ -158,7 +158,7 @@ _seed(
     PLACE,
     """
 library bookshop tavern newsroom university schoolhouse cottage
-postbox home town village city house garden forest shore beach
+hotel restaurant postbox home town village city house garden forest shore beach
 harbor island mountain valley coast field meadow bridge road street
 market church school hospital prison castle tower kitchen pantry
 lane stairs room rooms hall halls shore seashore countryside
