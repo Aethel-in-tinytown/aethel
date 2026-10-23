@@ -30,6 +30,7 @@ from .language import Analysis, HeuristicLanguage, select_language
 from . import grammar as _grammar
 from .notebook import Notebook as _Notebook
 from . import recall as _recall
+from . import lenses as _lenses
 from . import entities as _entities
 from . import tone as _tone
 from .longing import WantLedger, book_id, person_id, place_id, question_id
@@ -3462,12 +3463,84 @@ class Aethel:
             return {}
         return self._pack()["voices"]
 
+    # v0.36 (NLTK plan Phase 5): case law's tie band, measured
+    # against the council's canonical pass threshold (mind's 0.5,
+    # the bar impulse judgment and breathe_morality actually use;
+    # the morning table's stricter 0.60/0.53 bands are its own).
+    COUNCIL_TIE_BAND = 0.03
+
     def _council_score(self, action):
-        """Apply active council emphasis while keeping the neutral pack on the unweighted path."""
+        """Apply active council emphasis while keeping the neutral pack on the unweighted path.
+
+        v0.36 (NLTK plan Phase 5), NLTK mode only — the heuristic
+        branch below is the pre-Phase-5 code verbatim, and it returns
+        before any lens or recall machinery is touched, which is
+        what keeps a heuristic life bit-identical:
+
+        * Lexical lenses (lenses.py): each voice's effective weight
+          is temperament weight (base) x lens factor (this text),
+          composed in that order, in moral_score.
+        * Case law: the top precedent is recalled BEFORE scoring
+          (Phase 2's seam, journaling its own 'recall' event) and,
+          when it clears recall's reading threshold, cited in the
+          notes and journaled as one 'council_precedent' event.
+          CITATION ONLY — the precedent never moves the score, not
+          even inside COUNCIL_TIE_BAND. A tie-push would need the
+          precedent's own historical deliberation outcome, and those
+          outcomes are NOT cleanly recoverable: book beliefs are
+          appended whether their lesson passed or failed, dream
+          beliefs exist only on the top band, and 'I believe:' /
+          'I refuse:' beliefs encode outcomes only for the
+          breathe_morality path. Inventing a single outcome source
+          from those unlike records would be a lie in the arithmetic,
+          so inside the band the citation is flagged 'near tie —
+          cited, not pushed' and the score stands on the votes and
+          lenses alone."""
         w = self._voice_weights()
-        if w:
-            return self.llm.moral_score(action, self.philosophers, weights=w)
-        return self.llm.moral_score(action, self.philosophers)
+        if not self._nlp:
+            if w:
+                return self.llm.moral_score(action, self.philosophers, weights=w)
+            return self.llm.moral_score(action, self.philosophers)
+        lens_results = _lenses.lens_scores(self.language, action)
+        factors = {
+            voice: _lenses.lens_factor(r["score"])
+            for voice, r in lens_results.items()
+        }
+        citations = {
+            voice: _lenses.lens_citation(r)
+            for voice, r in lens_results.items()
+            if r["score"] >= _lenses.LENS_MATERIAL_SCORE and r["top_lemmas"]
+        }
+        precedent = self._recall_top(action, "council")
+        score, notes = self.llm.moral_score(
+            action,
+            self.philosophers,
+            weights=w or None,
+            lens_factors=factors,
+            lens_citations=citations,
+        )
+        if precedent is not None and precedent.score >= _recall.READING_THRESHOLD:
+            shared = ", ".join(
+                s["lemma"] for s in precedent.why["shared_lemmas"]
+            ) or "a path through kindred words"
+            in_band = abs(score - 0.5) <= self.COUNCIL_TIE_BAND
+            cite = (
+                f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            )
+            if in_band:
+                cite += " — near tie, cited not pushed"
+            notes = f"{notes} | {cite}"
+            journal(
+                "council_precedent",
+                n=self.tick_count,
+                query=action[:120],
+                precedent_id=precedent.candidate_id,
+                precedent=precedent.text[:120],
+                precedent_score=round(precedent.score, 4),
+                score=round(score, 4),
+                tie_band=in_band,
+            )
+        return score, notes
 
     def _check_temperament_file(self, n):
         """Validate a requested strain and queue or cancel a sleep-boundary change."""
