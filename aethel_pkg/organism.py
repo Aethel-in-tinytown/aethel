@@ -30,6 +30,7 @@ from .language import Analysis, HeuristicLanguage, select_language
 from . import grammar as _grammar
 from .notebook import Notebook as _Notebook
 from . import recall as _recall
+from . import entities as _entities
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
@@ -210,6 +211,12 @@ class Aethel:
             self._vocab_notebook = _Notebook.from_dict(self._loaded_notebook)
         else:
             self._vocab_notebook = _Notebook()
+        # v0.34: the entity gazetteer is built lazily by _gazetteer()
+        # (seeded from her world on first use in NLTK mode, restored
+        # from _loaded_gazetteer when a saved one exists). It is not
+        # built here: a heuristic life must never seed it, and lazy
+        # construction keeps that gate in exactly one place.
+        self._entity_gazetteer = None
         self._init_language_knowledge(saved)
         if not hasattr(self, "_grammar_caught_day"):
             self._grammar_caught_day = -1
@@ -228,6 +235,14 @@ class Aethel:
                 # life's blob stays bit-identical to a pre-notebook one.
                 **(
                     {"notebook": self._notebook().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
+                # v0.34: the entity gazetteer rides inside the state
+                # blob beside the notebook, on the same argument, and
+                # likewise exists only in NLTK mode.
+                **(
+                    {"gazetteer": self._gazetteer().to_dict()}
                     if self._nlp
                     else {}
                 ),
@@ -397,6 +412,7 @@ class Aethel:
                 # her acquisition tags, and the caught-line counters.
                 self._loaded_grammar = s.get("grammar_ledger")
                 self._loaded_notebook = s.get("notebook")
+                self._loaded_gazetteer = s.get("gazetteer")
                 self._loaded_word_tags = s.get("word_tags") or {}
                 self._grammar_caught_day = s.get("_grammar_caught_day", -1)
                 self._grammar_caught_count = s.get("_grammar_caught_count", 0)
@@ -442,6 +458,7 @@ class Aethel:
             self._loaded_state = False
             self._loaded_ledger = None
             self._loaded_notebook = None
+            self._loaded_gazetteer = None
 
     def say(self, text):
         """Print embodied narration and append it to the experience journal."""
@@ -1493,6 +1510,12 @@ class Aethel:
             belief = f"From {cur['title']}: {lesson}"
             if belief not in self.beliefs:
                 self.beliefs.append(belief)
+                # v0.34: the new belief attaches to the book's author
+                # (a gazetteer entity) and to any gazetteer entities
+                # its own text mentions. NLTK only; the helper gates.
+                self._link_belief_entities(
+                    belief, author=cur.get("author"), scan_text=belief
+                )
             self.moral_log.append(
                 {
                     "t": now_iso(),
@@ -1673,6 +1696,12 @@ class Aethel:
         # feed it too). `tokens` here are the retained Token objects.
         if self._nlp and analysis is not None:
             self._notebook_feed(analysis, tokens, meal["source"])
+        # v0.34: entity recognition over the SAME single analysis of
+        # the meal (the full passage she read, not only the retained
+        # tokens — a name she met counts even when an overtired meal
+        # slips half its words away).
+        if self._nlp and analysis is not None:
+            self._entities_feed(analysis, meal["source"])
         self.memory.append(
             {
                 "text": text[:500],
@@ -3131,6 +3160,117 @@ class Aethel:
             why=_recall.why_summary(hit.why),
         )
         return hit
+
+    # ---- v0.34: entity recognition, Route A (NLTK plan Phase 3) -------
+    def _gazetteer(self):
+        """Her entity gazetteer, built lazily: restored from the
+        loaded state when one was saved, otherwise seeded from her
+        world on first use. Callers gate on _nlp before touching
+        this; in heuristic mode it is never built, never saved."""
+        gaz = getattr(self, "_entity_gazetteer", None)
+        if gaz is None:
+            rows = getattr(self, "_loaded_gazetteer", None)
+            gaz = (
+                _entities.Gazetteer.from_dict(rows)
+                if rows
+                else _entities.Gazetteer.seeded()
+            )
+            self._entity_gazetteer = gaz
+        return gaz
+
+    def _entities_feed(self, analysis, source):
+        """Register one reading's entities in the gazetteer and her
+        journal: entity_seen per unknown sighting, entity_learned on
+        promotion, and exactly one entity_met per reading naming the
+        known entities met, with their running counts.
+
+        NLTK mode only: in heuristic mode this returns before
+        touching state, the journal, or any RNG stream, which is
+        what keeps a heuristic life bit-identical. Narration fires
+        only on a REPEAT meeting (count >= 2): "again" must be true,
+        and the count she speaks is the gazetteer's met_count, which
+        counts entity_met events by construction (see entities.py),
+        so the ordinal she says is derivable from her diary."""
+        if not self._nlp or analysis is None:
+            return None
+        gaz = self._gazetteer()
+        result = gaz.feed(
+            analysis,
+            source,
+            self.tick_count,
+            wordnet=getattr(self.language, "wordnet", None),
+        )
+        for seen in result["seen"]:
+            journal(
+                "entity_seen",
+                n=self.tick_count,
+                entity=seen["name"],
+                source=source,
+            )
+        for learned in result["learned"]:
+            journal(
+                "entity_learned",
+                n=self.tick_count,
+                entity=learned["name"],
+                kind=learned["kind"],
+                sources=list(learned["sources"]),
+            )
+        if result["met"]:
+            journal(
+                "entity_met",
+                n=self.tick_count,
+                entities=[m["name"] for m in result["met"]],
+                counts={m["name"]: m["count"] for m in result["met"]},
+                source=source,
+            )
+            repeat = next(
+                (m for m in result["met"] if m["count"] >= 2), None
+            )
+            if repeat is not None:
+                self.say(
+                    f"{repeat['name']} again — that is the "
+                    f"{_entities.ordinal(repeat['count'])} time that "
+                    f"name has crossed my reading."
+                )
+        return result
+
+    def _link_belief_entities(self, belief_text, author=None, scan_text=None):
+        """Attach a newly formed belief to gazetteer entities: its
+        book's author, plus any known entities the belief's own text
+        mentions. Journals one belief_entity event whose belief id
+        is the Phase 2 scheme (recall.candidate_id). NLTK only, and
+        only when at least one gazetteer entity actually attaches —
+        an unlinked belief journals nothing."""
+        if not self._nlp or not belief_text:
+            return None
+        gaz = self._gazetteer()
+        names = []
+        for candidate in [author]:
+            if candidate:
+                entry = gaz.get(candidate)
+                if entry is not None and entry["name"] not in names:
+                    names.append(entry["name"])
+        if scan_text:
+            analysis = self.language.analyze(scan_text)
+            for phrase in _entities.extract_phrases(
+                analysis,
+                gaz.match_keys(),
+                wordnet=getattr(self.language, "wordnet", None),
+            ):
+                entry = gaz.get(phrase["name"])
+                if entry is not None and entry["name"] not in names:
+                    names.append(entry["name"])
+        if not names:
+            return None
+        payload = _entities.belief_link(belief_text, names)
+        journal(
+            "belief_entity",
+            n=self.tick_count,
+            belief_id=payload["belief_id"],
+            belief=payload["belief"],
+            entities=payload["entities"],
+        )
+        return payload
 
     def _top_want_entry(self):
         return self._ledger().top()
