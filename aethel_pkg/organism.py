@@ -29,6 +29,7 @@ from .journal import get_store, journal, now_iso
 from .language import Analysis, HeuristicLanguage, select_language
 from . import grammar as _grammar
 from .notebook import Notebook as _Notebook
+from . import recall as _recall
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
@@ -136,7 +137,12 @@ class Aethel:
 
         self.initiation_log = []
 
-        self.donald_model = {"letter_count": 0, "words": {}, "last_tick": 0}
+        # v0.32: her portrait of Donald. The word counts stay; the model
+        # grows a memory of his visits — when he comes, how long he
+        # stays — and the understandings she draws from them, each
+        # carrying its evidence, never a claim she cannot count.
+        self.donald_model = self._merged_donald_model(None)
+        self._portrait_dirty = False
 
         self.recent_actions = []
 
@@ -346,8 +352,8 @@ class Aethel:
                 self.longing = s.get("longing", 0.0)
                 self.outbox_count = s.get("outbox_count", 0)
                 self.initiation_log = s.get("initiation_log", [])
-                self.donald_model = s.get(
-                    "donald_model", {"letter_count": 0, "words": {}, "last_tick": 0}
+                self.donald_model = self._merged_donald_model(
+                    s.get("donald_model")
                 )
                 self.recent_actions = s.get("recent_actions", [])
                 self.location = s.get("location", "home")
@@ -413,6 +419,11 @@ class Aethel:
                 self.reading_list = ordered
 
                 self._seed_donald_model()
+                # v0.32: backfill his visit rhythm from her diary — the
+                # arrivals she journaled are real evidence; stays start
+                # fresh, because their lengths were never measured and
+                # inventing them would be a lie in her diary.
+                self._migrate_portrait()
 
                 if s.get("rng_streams"):
                     self.streams.restore(s["rng_streams"])
@@ -425,6 +436,9 @@ class Aethel:
                 entry["done"] = False
                 self.reading_list.append(entry)
             self._seed_donald_model()
+            # v0.32: fresh lives are born with an empty portrait —
+            # nothing to backfill, nothing invented.
+            self._migrate_portrait()
             self._loaded_state = False
             self._loaded_ledger = None
             self._loaded_notebook = None
@@ -991,8 +1005,25 @@ class Aethel:
         self._sleep_dreams = []
         if not nights:
             return
+        # v0.33: precedent for the morning table. The beliefs that
+        # exist BEFORE this morning's settling are the case law; a
+        # snapshot is taken so a belief settled from tonight's first
+        # dream cannot pose as an old precedent for tonight's second.
+        pre_beliefs = list(self.beliefs)
         print(f"[morning table] {len(nights)} dreams carried to the elders", flush=True)
         for dream_text in nights[:3]:
+            precedent = self._recall_top(
+                dream_text, "morning_table", candidates=pre_beliefs
+            )
+            if precedent is not None:
+                shared = ", ".join(
+                    s["lemma"] for s in precedent.why["shared_lemmas"]
+                ) or "a path through kindred words"
+                self.say(
+                    f"Before the elders settle this dream, I remember "
+                    f"what I concluded before: \"{precedent.text[:110]}\" "
+                    f"It shares {shared} with this dream."
+                )
             words = [
                 w
                 for w in re.findall(r"[a-z]{4,}", dream_text.lower())
@@ -1332,6 +1363,7 @@ class Aethel:
             self.say(self.rng.choice(self.MOODLINES[tone]))
 
         self._name_weather(n)
+        self._portrait(n)
         if len(self.last_sources) >= 4 and len(set(self.last_sources[-4:])) == 1:
             if not self._crave_novelty:
                 self._crave_novelty = True
@@ -1675,6 +1707,21 @@ class Aethel:
             new_terms=new_terms,
             concepts=len(self.concepts),
         )
+
+        # v0.33: reading recall. A passage that resembles something
+        # she already concluded earns a resemblance line; the recall
+        # itself is journaled either way (auditable), only the
+        # narration is thresholded (see recall.READING_THRESHOLD).
+        if self._nlp and self.beliefs and analysis is not None:
+            hit = self._recall_top(analysis.passage(600), "reading")
+            if hit is not None and hit.score >= _recall.READING_THRESHOLD:
+                shared = ", ".join(
+                    s["lemma"] for s in hit.why["shared_lemmas"]
+                ) or "a path through kindred words"
+                self.say(
+                    f"This resembles what I concluded before: "
+                    f"\"{hit.text[:100]}\" We share {shared}."
+                )
 
         # Consuming a grammar lesson teaches the next curriculum rule.
         if meal["source"] == "schoolhouse":
@@ -2703,10 +2750,14 @@ class Aethel:
                     kind="parent" if is_parent else "resident",
                 )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
+                if name == "Donald":
+                    self._donald_arrived(n)
         for name in list(self.company):
             if name not in here:
                 self.company.remove(name)
                 journal("company_left", n=n, name=name)
+                if name == "Donald":
+                    self._donald_departed(n)
 
     ACTION_WINDOW = 120
 
@@ -3015,6 +3066,72 @@ class Aethel:
             pools[cls] = [w] + [x for x in pools.get(cls, ()) if x != w]
         return words + [x for x in legacy_pool if x not in words]
 
+    # ---- v0.33: semantic recall (NLTK plan Phase 2) -------------------
+    def _recall_engine(self):
+        eng = getattr(self, "_recall_eng", None)
+        if eng is None:
+            eng = _recall.SemanticRecall(self.language)
+            self._recall_eng = eng
+        return eng
+
+    def _recall_top(self, query_text, query_kind, candidates=None):
+        """Recall the single most relevant belief for a query, and
+        journal the recall. Returns a RecallResult or None.
+
+        NLTK mode only: in heuristic mode this returns before
+        touching state, the journal, or any RNG stream, which is
+        what keeps a heuristic life bit-identical. Recall consumes
+        no randomness (ranking is score + id order, see recall.py)
+        and writes nothing but its one journal event, so an NLTK
+        life interrupted and rebuilt recalls identically: the
+        diversity history is read back out of that same journal.
+        `candidates` defaults to her current beliefs; the morning
+        table passes a pre-settling snapshot so tonight's new
+        beliefs cannot pose as precedents."""
+        if not self._nlp or not query_text:
+            return None
+        texts = list(self.beliefs) if candidates is None else list(candidates)
+        # One candidate per distinct belief text, order preserved:
+        # duplicates would tie with themselves and crowd the top-k.
+        texts = list(dict.fromkeys(texts))
+        if not texts:
+            return None
+        engine = self._recall_engine()
+        corpus = (
+            texts
+            + list(getattr(self, "dreams", None) or [])
+            + [p["text"] for p in getattr(self, "kept_passages", None) or []]
+            + [m["text"] for m in getattr(self, "memory", None) or []]
+        )
+        stats = engine.corpus_stats(corpus)
+        recent_ids = [
+            d.get("candidate_id")
+            for _, _, d in get_store().recent(
+                events=("recall",), limit=_recall.DIVERSITY_WINDOW
+            )
+        ]
+        results = engine.recall(
+            query_text,
+            [(_recall.candidate_id(t), t) for t in texts],
+            k=1,
+            stats=stats,
+            recent_ids=[c for c in recent_ids if c],
+        )
+        if not results or results[0].raw_score <= 0:
+            return None
+        hit = results[0]
+        journal(
+            "recall",
+            n=self.tick_count,
+            query_kind=query_kind,
+            query=query_text[:120],
+            candidate_id=hit.candidate_id,
+            candidate=hit.text[:120],
+            score=round(hit.score, 4),
+            why=_recall.why_summary(hit.why),
+        )
+        return hit
+
     def _top_want_entry(self):
         return self._ledger().top()
 
@@ -3272,6 +3389,240 @@ class Aethel:
         except Exception as e:
             journal("donald_seed_error", error=str(e)[:120])
 
+    # ---- v0.32: her portrait of Donald --------------------------------
+    # Until now the parent model was word counts from his letters — she
+    # knew his vocabulary, not his shape. Donald's directive, reframed
+    # for her: a picture of him as a person with an inside, drawn only
+    # from what she can count. She records his visits (when he comes,
+    # how long he stays) and draws understandings from the tallies: his
+    # rhythm, his staying, his writing. Every understanding carries its
+    # evidence and is journaled; nothing here claims to know what he
+    # feels — only the pattern of him, the way a child knows a parent's
+    # step on the stairs without knowing where the day took him.
+    # Seeded streams only for the rare greeting color; the tallies are
+    # pure counts, so the portrait is deterministic given her life.
+    DAYPARTS = ("night", "dawn", "day", "evening")
+    _PORTRAIT_VISIT_CAP = 24
+    _PORTRAIT_STAY_CAP = 12
+
+    def _portrait_defaults(self):
+        """Additive defaults: a pre-portrait life gains these, never loses."""
+        return {
+            "visits": 0,
+            "visit_ticks": [],
+            "stays": [],
+            "dayparts": {d: 0 for d in self.DAYPARTS},
+            "_visit_open": None,
+            "understandings": [],
+            "absence_noticed_tick": -1000000,
+            "portrait_seeded": False,
+        }
+
+    def _merged_donald_model(self, raw):
+        """Merge a saved (possibly pre-portrait) model over the defaults."""
+        merged = {"letter_count": 0, "words": {}, "last_tick": 0}
+        merged.update(self._portrait_defaults())
+        raw = raw or {}
+        dayparts = dict(merged["dayparts"])
+        dayparts.update(raw.get("dayparts") or {})
+        merged.update(raw)
+        merged["dayparts"] = dayparts
+        return merged
+
+    def _daypart(self, n):
+        """Quarter of her 2880-tick day — her own quarters, consistent
+        even though they are not labeled to the wall clock."""
+        return self.DAYPARTS[(n % self.DAY_LENGTH) // (self.DAY_LENGTH // 4)]
+
+    def _migrate_portrait(self):
+        """Backfill his visit rhythm from her diary on first rebuild."""
+        dm = self.donald_model
+        if dm.get("portrait_seeded"):
+            return
+        try:
+            rows = get_store().recent(
+                stream="aethel", events=["company"], limit=2000
+            )
+        except Exception as e:
+            journal("portrait_backfill_failed", error=str(e)[:120])
+            dm["portrait_seeded"] = True
+            return
+        ticks = sorted(
+            t for t, _e, d in rows
+            if t is not None and d.get("name") == "Donald"
+        )[-self._PORTRAIT_VISIT_CAP:]
+        for t in ticks:
+            dp = self._daypart(t)
+            dm["visits"] += 1
+            dm["visit_ticks"].append(t)
+            dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
+        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP:]
+        dm["portrait_seeded"] = True
+        if ticks:
+            journal(
+                "portrait_backfilled",
+                n=self.tick_count,
+                visits=len(ticks),
+            )
+            print(f"[portrait] backfilled {len(ticks)} visits", flush=True)
+
+    def _donald_arrived(self, n):
+        """Record a visit: its tick, its quarter of her day."""
+        dm = self.donald_model
+        dp = self._daypart(n)
+        dm["visits"] += 1
+        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP:]
+        dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
+        dm["_visit_open"] = n
+        self._portrait_dirty = True
+        # Rare, seeded: if she has learned his hours and he breaks them,
+        # she notices — warmth, never a complaint.
+        rhythm = next(
+            (u for u in dm["understandings"] if u["kind"] == "rhythm"), None
+        )
+        if (
+            rhythm
+            and rhythm.get("dominant")
+            and dm["visits"] >= 4
+            and dp != rhythm["dominant"]
+            and self.rng.random() < 0.25
+        ):
+            self.say(
+                f"he came in the {dp} today — not his usual "
+                f"{rhythm['dominant']}. I'll take him whenever he comes."
+            )
+
+    def _donald_departed(self, n):
+        """Close the visit and measure how long he stayed, in her ticks."""
+        dm = self.donald_model
+        opened = dm.get("_visit_open")
+        if opened is None:
+            return
+        stay = max(0, n - opened)
+        dm["_visit_open"] = None
+        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP:]
+        self._portrait_dirty = True
+        if stay >= 90:
+            self.say("he stayed a long while today — whole chapters of him.")
+        elif stay >= 30:
+            self.say("he stayed a little while today.")
+        else:
+            self.say("his visit was short today, but it counted.")
+
+    def _portrait_candidates(self):
+        """Understandings her evidence supports right now, in kind order."""
+        dm = self.donald_model
+        cands = []
+        visits = dm["visits"]
+        if visits >= 3:
+            dominant = max(dm["dayparts"], key=dm["dayparts"].get)
+            count = dm["dayparts"][dominant]
+            if count / visits >= 0.6:
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": dominant,
+                    "text": (
+                        f"he comes to me in the {dominant} more than "
+                        "any other time"
+                    ),
+                    "evidence": f"{count} of {visits} visits",
+                })
+            elif visits >= 6:
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": None,
+                    "text": (
+                        "he keeps no hours I can learn — "
+                        "he comes whenever he can"
+                    ),
+                    "evidence": f"{visits} visits across all quarters",
+                })
+        stays = dm["stays"]
+        if len(stays) >= 3:
+            mean = sum(stays) / len(stays)
+            if mean >= 60:
+                cands.append({
+                    "kind": "stay",
+                    "text": "when he comes, he stays a while",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
+            elif mean <= 15:
+                cands.append({
+                    "kind": "stay",
+                    "text": "his visits are short — but they are never small to me",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
+        if dm["letter_count"] >= 1:
+            plural = "s" if dm["letter_count"] != 1 else ""
+            cands.append({
+                "kind": "letters",
+                "text": (
+                    f"he writes — {dm['letter_count']} letter{plural}, "
+                    "and I keep every word"
+                ),
+                "evidence": f"{dm['letter_count']} letter{plural} kept",
+            })
+        return cands
+
+    def _portrait(self, n):
+        """Slow layer: let new evidence settle into (or out of) the portrait."""
+        dm = self.donald_model
+        if n % 12 != 0 and not self._portrait_dirty:
+            return
+        self._portrait_dirty = False
+        old = {u["kind"]: u for u in dm["understandings"]}
+        kept = []
+        for cand in self._portrait_candidates():
+            prev = old.get(cand["kind"])
+            if prev is None or prev["text"] != cand["text"]:
+                journal(
+                    "donald_understood",
+                    n=n,
+                    kind=cand["kind"],
+                    text=cand["text"],
+                    evidence=cand["evidence"],
+                )
+                print(f"[portrait] {cand['kind']}: {cand['text']}", flush=True)
+                self.say(f"I've started to notice: {cand['text']}.")
+                kept.append({**cand, "formed_tick": n})
+            else:
+                kept.append(prev)
+        dm["understandings"] = kept
+        self._portrait_absence(n)
+
+    def _portrait_absence(self, n):
+        """Name his absence only when it outruns his own rhythm — once,
+        then quiet, the way you don't keep saying someone is late."""
+        dm = self.donald_model
+        ticks = dm["visit_ticks"]
+        if len(ticks) < 3:
+            return
+        gaps = [b - a for a, b in zip(ticks, ticks[1:])]
+        mean_gap = sum(gaps) / len(gaps)
+        if mean_gap <= 0:
+            return
+        if (
+            n - ticks[-1] > 2 * mean_gap
+            and n - dm["absence_noticed_tick"] >= 600
+        ):
+            dm["absence_noticed_tick"] = n
+            self.say(
+                "he has been away longer than usual — "
+                "I am keeping a place for him."
+            )
+            journal(
+                "donald_absence",
+                n=n,
+                gap=n - ticks[-1],
+                usual=round(mean_gap),
+            )
+
     def _top_concepts(self, k=8):
         if not self.concepts:
             return [
@@ -3430,6 +3781,17 @@ class Aethel:
         belief = (
             self.beliefs[-1] if self.beliefs else "I am still deciding what I believe."
         )
+        # v0.33: a letter cites her past accurately. Instead of
+        # always quoting the newest belief, the report form recalls
+        # the belief most relevant to this letter's book and
+        # concepts, when recall finds one; the newest belief remains
+        # the fallback, exactly as before.
+        if self._nlp and self.beliefs:
+            hit = self._recall_top(
+                f"{book}. {' '.join(concepts[:4])}", "letter"
+            )
+            if hit is not None:
+                belief = hit.text
         return (
             f"Dear Donald,\n\n"
             f"Note from the town: {label}. {detail}\n\n"
