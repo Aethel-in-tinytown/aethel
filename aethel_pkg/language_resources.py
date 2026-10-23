@@ -38,22 +38,46 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def verify_resource(root, name):
+    """Verify one named resource's every byte against the lock.
+
+    Raises LanguageError on a missing, symlinked, or mismatched file.
+    This is the fail-closed check itself; what a caller does with the
+    failure is the caller's design question (see verify()).
+    """
+    resource = lock()["resources"][name]
+    for relative, expected in resource["files"].items():
+        path = root / relative
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or digest(path.read_bytes()) != expected
+        ):
+            raise LanguageError(
+                f"Missing or mismatched NLTK resource: {path}. "
+                "Provision with python -m aethel_pkg.language_resources --download"
+            )
+    return resource["sha256"]
+
+
 def verify(root):
-    """Verify every runtime model byte against the shipped artifact lock."""
+    """Verify every boot-critical resource byte against the shipped lock.
+
+    Resources marked "optional" in the lock are NOT verified here and
+    contribute no fingerprint. That exclusion is load-bearing, twice:
+    (1) the returned fingerprints become the backend's saved-state
+    compatibility metadata — an optional resource arriving in a later
+    version must not make a saved life look incompatible; (2) Law 2
+    scopes fail-closed to the feature: an optional resource's absence
+    removes its phase loudly (its loader runs verify_resource and
+    reports), never the whole backend. Core resources stay as strict
+    as they ever were.
+    """
     fingerprints = {}
     for name, resource in lock()["resources"].items():
-        for relative, expected in resource["files"].items():
-            path = root / relative
-            if (
-                not path.is_file()
-                or path.is_symlink()
-                or digest(path.read_bytes()) != expected
-            ):
-                raise LanguageError(
-                    f"Missing or mismatched NLTK resource: {path}. "
-                    "Provision with python -m aethel_pkg.language_resources --download"
-                )
-        fingerprints[name] = resource["sha256"]
+        if resource.get("optional"):
+            continue
+        fingerprints[name] = verify_resource(root, name)
     return fingerprints
 
 
@@ -85,6 +109,11 @@ def provision(root, archives=None):
                     target.write_bytes(source.read(member))
         shutil.copytree(DATA / "licenses", stage / "licenses")
         verify(stage)
+        # Optional resources skip the boot gate, never provisioning:
+        # a fresh install must carry their verified bytes too.
+        for name, resource in lock()["resources"].items():
+            if resource.get("optional"):
+                verify_resource(stage, name)
         stage.rename(root)
 
 

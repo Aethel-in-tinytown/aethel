@@ -31,6 +31,7 @@ from . import grammar as _grammar
 from .notebook import Notebook as _Notebook
 from . import recall as _recall
 from . import entities as _entities
+from . import tone as _tone
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
@@ -218,6 +219,26 @@ class Aethel:
         # construction keeps that gate in exactly one place.
         self._entity_gazetteer = None
         self._init_language_knowledge(saved)
+        # v0.35: reading-tone annotations (NLTK plan Phase 4). The
+        # analyzer is probed once here, at boot: if the pinned lexicon
+        # fails verification the phase is absent LOUDLY from the start
+        # (see tone.py for the Law 2 argument), not discovered missing
+        # at her first meal. The effects cap tracker restores only
+        # while the flag is on — with it off (the shipped default) it
+        # is never persisted, so a flag-off state blob carries no tone
+        # keys at all.
+        self._tone_state = "unset"
+        self._tone_analyzer_obj = None
+        self._tone_reason = None
+        self._last_tone_compound = None
+        _loaded_fx = getattr(self, "_loaded_tone_effects", None)
+        self._tone_fx = (
+            dict(_loaded_fx)
+            if (config.TONE_EFFECTS_ENABLED and _loaded_fx)
+            else {"day": -1, "applied": 0.0}
+        )
+        if self._nlp:
+            self._tone_analyzer()
         if not hasattr(self, "_grammar_caught_day"):
             self._grammar_caught_day = -1
             self._grammar_caught_count = 0
@@ -244,6 +265,20 @@ class Aethel:
                 **(
                     {"gazetteer": self._gazetteer().to_dict()}
                     if self._nlp
+                    else {}
+                ),
+                # v0.35: the tone-effects per-day cap tracker rides
+                # only while the effects flag is on; flag-off lives
+                # persist nothing about tone.
+                **(
+                    {
+                        "tone_effects": dict(
+                            getattr(
+                                self, "_tone_fx", {"day": -1, "applied": 0.0}
+                            )
+                        )
+                    }
+                    if config.TONE_EFFECTS_ENABLED
                     else {}
                 ),
                 "rng_streams": self.streams.dump(),
@@ -413,6 +448,7 @@ class Aethel:
                 self._loaded_grammar = s.get("grammar_ledger")
                 self._loaded_notebook = s.get("notebook")
                 self._loaded_gazetteer = s.get("gazetteer")
+                self._loaded_tone_effects = s.get("tone_effects")
                 self._loaded_word_tags = s.get("word_tags") or {}
                 self._grammar_caught_day = s.get("_grammar_caught_day", -1)
                 self._grammar_caught_count = s.get("_grammar_caught_count", 0)
@@ -459,6 +495,7 @@ class Aethel:
             self._loaded_ledger = None
             self._loaded_notebook = None
             self._loaded_gazetteer = None
+            self._loaded_tone_effects = None
 
     def say(self, text):
         """Print embodied narration and append it to the experience journal."""
@@ -839,7 +876,20 @@ class Aethel:
         legacy_pool = self._notebook_augment_pools(pools, legacy_pool)
         fragment = None
         if self.beliefs and self.rng_dreams.random() < 0.3:
-            frag = self._dream_fragment(self.rng_dreams.choice(self.beliefs))
+            pool = self.beliefs
+            # v0.35 step 2, gated: tone-congruent fragments first.
+            # With the flag off this branch is never entered and the
+            # choice below is the pre-tone one, stream for stream.
+            if (
+                config.TONE_EFFECTS_ENABLED
+                and getattr(self, "_last_tone_compound", None) is not None
+            ):
+                _analyzer = self._tone_analyzer()
+                if _analyzer is not None:
+                    pool = _tone.bias_fragments(
+                        self.beliefs, self._last_tone_compound, _analyzer
+                    )
+            frag = self._dream_fragment(self.rng_dreams.choice(pool))
             # A fragment is a clause, not a slot — but a clause full
             # of page furniture is still furniture. Loose check:
             # scaffolding (and, once she owns it, stutter) only. The
@@ -1702,6 +1752,11 @@ class Aethel:
         # slips half its words away).
         if self._nlp and analysis is not None:
             self._entities_feed(analysis, meal["source"])
+        # v0.35: tone annotation of the SAME single analysis — the
+        # passage she just read, annotated and journaled, changing
+        # nothing else while the effects flag is off.
+        if self._nlp and analysis is not None:
+            self._tone_feed(analysis, meal["source"])
         self.memory.append(
             {
                 "text": text[:500],
@@ -3271,6 +3326,72 @@ class Aethel:
             entities=payload["entities"],
         )
         return payload
+
+    # ---- v0.35: reading-tone annotations (NLTK plan Phase 4) ---------
+
+    def _tone_analyzer(self):
+        """Her pinned VADER analyzer, loaded and verified once.
+
+        On verification failure the phase is absent loudly: one boot
+        log line and exactly one tone_unavailable journal event from
+        this probe, and None from here on — she runs normally, she
+        just does not annotate (tone.py argues the Law 2 shape)."""
+        state = getattr(self, "_tone_state", "unset")
+        if state == "ready":
+            return self._tone_analyzer_obj
+        if state == "unavailable":
+            return None
+        try:
+            analyzer = _tone.load_analyzer()
+        except _tone.ToneUnavailable as exc:
+            self._tone_state = "unavailable"
+            self._tone_analyzer_obj = None
+            self._tone_reason = str(exc)
+            print(
+                f"[tone] reading-tone annotations unavailable: {exc}",
+                flush=True,
+            )
+            journal(
+                "tone_unavailable",
+                n=getattr(self, "tick_count", 0),
+                reason=str(exc)[:160],
+            )
+            return None
+        self._tone_state = "ready"
+        self._tone_analyzer_obj = analyzer
+        return analyzer
+
+    def _tone_feed(self, analysis, source):
+        """Annotate one reading's tone and journal exactly one event.
+
+        NLTK mode only: in heuristic mode this returns before
+        touching state, the journal, or any RNG stream, which is what
+        keeps a heuristic life bit-identical. Annotations change
+        nothing else in this version; the step-2 effects call below
+        is wired in and short-circuits on config.TONE_EFFECTS_ENABLED
+        (False as shipped), so flipping that one line is the whole
+        enable."""
+        if not self._nlp or analysis is None:
+            return None
+        analyzer = self._tone_analyzer()
+        if analyzer is None:
+            return None
+        annotation = _tone.annotate(analysis.text, analyzer)
+        self._last_tone_compound = annotation["compound"]
+        journal(
+            "tone",
+            n=self.tick_count,
+            source=source,
+            compound=annotation["compound"],
+            pos=annotation["pos"],
+            neu=annotation["neu"],
+            neg=annotation["neg"],
+            top_pos_word=annotation["strongest_positive_word"],
+            top_neg_word=annotation["strongest_negative_word"],
+        )
+        if config.TONE_EFFECTS_ENABLED:
+            _tone.apply_tone_effects(self, annotation)
+        return annotation
 
     def _top_want_entry(self):
         return self._ledger().top()

@@ -11,6 +11,12 @@ TIME_SCALE = 1.0
 SEED = None
 MEMORY_CAP = 12
 
+# v0.35 (NLTK plan Phase 4): reading-tone annotations ship with their
+# effects code path present but DISABLED. Flipping this to True is the
+# one-line enable, and it is Donald's call only, after the audit week
+# reads sane. While False, annotations journal and nothing else moves.
+TONE_EFFECTS_ENABLED = False
+
 
 def base_dir():
     return os.environ.get("AETHEL_HOME", os.path.expanduser("~/workspace/aethel"))

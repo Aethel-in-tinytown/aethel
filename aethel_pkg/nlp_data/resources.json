@@ -47,6 +47,15 @@
         "corpora/wordnet/index.noun": "a490d99d93d017bf4822fe2f0ffa51fd73911ce271dc7535fade21f8814b5a04",
         "corpora/wordnet/adj.exc": "8824cc24bbedd797b9702316b27f07cd4c2b76b629539f0a1276f03926758016"
       }
+    },
+    "vader_lexicon": {
+      "sha256": "8adba4294eef3964d820bf655e37e61bdc3a341994356af59b74fb3b4a36ce5c",
+      "url": "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/sentiment/vader_lexicon.zip",
+      "subdir": "sentiment",
+      "optional": true,
+      "files": {
+        "sentiment/vader_lexicon/vader_lexicon.txt": "0aabac74cd95def2dbedc04ce55e39698d91113ffadb6d86b87dd337c4d2184d"
+      }
     }
   }
 }
