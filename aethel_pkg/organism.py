@@ -26,8 +26,9 @@ from .forage import (
     wikisource_chapter,
 )
 from .journal import get_store, journal, now_iso
-from .language import HeuristicLanguage, select_language
+from .language import Analysis, HeuristicLanguage, select_language
 from . import grammar as _grammar
+from .notebook import Notebook as _Notebook
 from .longing import WantLedger, book_id, person_id, place_id, question_id
 from .mind import MockLLM
 from .narration import narrate_body, narrate_council, narrate_meal
@@ -195,6 +196,14 @@ class Aethel:
             self._grammar_ledger = _grammar.GrammarLedger()
             self._grammar_ledger.migrate(self.tick_count)
         self._word_tags = dict(getattr(self, "_loaded_word_tags", None) or {})
+        # v0.31: the vocabulary notebook. A pre-notebook life starts
+        # with an empty one — no backfill, because the provenance
+        # (sentence, tick) of words met earlier was never recorded
+        # and inventing it would be a lie in her diary.
+        if getattr(self, "_loaded_notebook", None):
+            self._vocab_notebook = _Notebook.from_dict(self._loaded_notebook)
+        else:
+            self._vocab_notebook = _Notebook()
         self._init_language_knowledge(saved)
         if not hasattr(self, "_grammar_caught_day"):
             self._grammar_caught_day = -1
@@ -207,6 +216,15 @@ class Aethel:
                 "seed": self.seed,
                 "language": getattr(self, "language", HeuristicLanguage()).metadata,
                 **({"lemma_index": self.lemma_index} if self._nlp else {}),
+                # v0.31: the vocabulary notebook rides inside the state
+                # blob (see notebook.py for the argument) and, like
+                # lemma_index, exists only in NLTK mode — a heuristic
+                # life's blob stays bit-identical to a pre-notebook one.
+                **(
+                    {"notebook": self._notebook().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 "rng_streams": self.streams.dump(),
                 "vitals": self.vitals,
                 "memory": self.memory[-MEMORY_CAP:],
@@ -372,6 +390,7 @@ class Aethel:
                 # v0.29: same stash pattern for the grammar ledger,
                 # her acquisition tags, and the caught-line counters.
                 self._loaded_grammar = s.get("grammar_ledger")
+                self._loaded_notebook = s.get("notebook")
                 self._loaded_word_tags = s.get("word_tags") or {}
                 self._grammar_caught_day = s.get("_grammar_caught_day", -1)
                 self._grammar_caught_count = s.get("_grammar_caught_count", 0)
@@ -408,6 +427,7 @@ class Aethel:
             self._seed_donald_model()
             self._loaded_state = False
             self._loaded_ledger = None
+            self._loaded_notebook = None
 
     def say(self, text):
         """Print embodied narration and append it to the experience journal."""
@@ -782,6 +802,10 @@ class Aethel:
         legacy_pool = [w for w in words if self._word_class(w) != _grammar.SCAFFOLDING]
         if len(legacy_pool) < 2:
             legacy_pool = ["hunger", "light"]
+        # v0.31: known/hers notebook words restock both pools, hers
+        # first — real sourced vocabulary ahead of raw frequency, so
+        # the fragment pool stops starving into meta-words.
+        legacy_pool = self._notebook_augment_pools(pools, legacy_pool)
         fragment = None
         if self.beliefs and self.rng_dreams.random() < 0.3:
             frag = self._dream_fragment(self.rng_dreams.choice(self.beliefs))
@@ -926,6 +950,8 @@ class Aethel:
             self.dreams.pop(0)
         self.say(text)
         journal("dream", n=self.tick_count, text=text[:300])
+        # v0.31: words she dreamed with become hers.
+        self._notebook_mark_generated(text, via="dream")
         return text
 
     def sleep_tick(self, n):
@@ -1609,6 +1635,12 @@ class Aethel:
                             tags[w] = {"c": cls, "src": meal["source"]}
                     self.concepts[w] = self.concepts.get(w, 0) + 1
         self._update_cooc(words)
+        # v0.31: press the meal's new content words into her
+        # vocabulary notebook (NLTK mode only; the schoolhouse
+        # harvest arrives through this same meal path, so lessons
+        # feed it too). `tokens` here are the retained Token objects.
+        if self._nlp and analysis is not None:
+            self._notebook_feed(analysis, tokens, meal["source"])
         self.memory.append(
             {
                 "text": text[:500],
@@ -2874,6 +2906,115 @@ class Aethel:
             or rule["example"],
         )
 
+    # ---- v0.31: the vocabulary notebook ------------------------------
+    def _notebook(self):
+        """Her vocabulary notebook, built lazily with the same caution
+        as _grammar(): bare test organisms generation-proof first."""
+        nb = getattr(self, "_vocab_notebook", None)
+        if nb is None:
+            rows = getattr(self, "_loaded_notebook", None)
+            nb = _Notebook.from_dict(rows) if rows else _Notebook()
+            self._vocab_notebook = nb
+        return nb
+
+    def _notebook_feed(self, analysis, tokens, source):
+        """Press a meal's retained content words into the notebook.
+
+        NLTK mode only: in heuristic mode this returns before touching
+        state, the journal, or any RNG stream, which is what keeps a
+        heuristic life bit-identical. `tokens` are the tokens the meal
+        actually retained (an overtired meal slips half away before
+        this runs, and the notebook keeps only what she kept). The
+        analysis is reused, never recomputed — a meal is analyzed
+        exactly once."""
+        if not self._nlp or analysis is None:
+            return
+        sub = Analysis(analysis.text, analysis.sentences, tuple(tokens))
+        events = self._notebook().feed(
+            sub,
+            source,
+            self.tick_count,
+            wordnet=getattr(self.language, "wordnet", None),
+            is_content=self.language.content,
+        )
+        for name, entry in events:
+            if name == "notebook_pressed":
+                journal(
+                    "notebook_pressed",
+                    n=self.tick_count,
+                    lemma=entry["lemma"],
+                    source=source,
+                    pos=entry["pos"],
+                    synset=entry["synset"],
+                )
+            else:
+                journal(
+                    "notebook_known",
+                    n=self.tick_count,
+                    lemma=entry["lemma"],
+                    sources=list(entry["sources"]),
+                )
+
+    def _notebook_mark_generated(self, text, via):
+        """Graduate notebook words she just used in her own text.
+
+        Dreams, verses, and letters are hers in a way reading is not;
+        a pressed/known word that survives her own generation becomes
+        hers. Analyzing her output is pure (no RNG, no state beyond
+        the notebook), and in heuristic mode — or with an empty
+        notebook — this is a no-op."""
+        if not self._nlp or not text:
+            return
+        nb = self._notebook()
+        if not len(nb):
+            return
+        analysis = self.language.analyze(text)
+        lemmas = {
+            t.lemma for t in analysis.tokens if self.language.content(t)
+        }
+        for entry in nb.mark_hers(lemmas):
+            journal(
+                "notebook_hers",
+                n=self.tick_count,
+                lemma=entry["lemma"],
+                via=via,
+            )
+
+    def _notebook_pool_words(self):
+        """Known/hers lemmas generation may draw on, hers first.
+        Empty in heuristic mode, so every consumer falls back to its
+        pre-notebook behavior unchanged."""
+        if not self._nlp:
+            return []
+        return self._notebook().usable_words()
+
+    def _notebook_augment_pools(self, pools, legacy_pool):
+        """Restock dream pools with known/hers notebook words.
+
+        This is the grammar ledger's natural hook for the notebook:
+        the ledger's word pools ARE the dream pools, keyed by the
+        classes grammar.classify_word assigns (consulted here through
+        _word_class, the organism's layered classifier). A notebook
+        word is prepended to its class pool — typed slots scan their
+        pool in order, so a sourced word she knows beats an unsourced
+        frequency neighbor — and to the legacy pool, hers first.
+        Words that fail the dream shape filter keep out, exactly as
+        concept words do. Returns the (possibly unchanged) legacy
+        pool; `pools` is mutated in place."""
+        words = [
+            w
+            for w in self._notebook_pool_words()
+            if len(w) > 4 and w not in STOPWORDS and self._dream_word_ok(w)
+        ]
+        if not words:
+            return legacy_pool
+        for w in words:
+            cls = self._word_class(w)
+            if cls is None or cls == _grammar.SCAFFOLDING:
+                continue
+            pools[cls] = [w] + [x for x in pools.get(cls, ()) if x != w]
+        return words + [x for x in legacy_pool if x not in words]
+
     def _top_want_entry(self):
         return self._ledger().top()
 
@@ -3224,6 +3365,15 @@ class Aethel:
             # starved of fitting nouns is still a verse — but pure
             # scaffolding is never a fallback: it is not a word she
             # can mean.
+            # v0.31: known/hers notebook words scan first for every
+            # slot — she versifies with the vocabulary she can source.
+            verse_concepts = concepts
+            if self._nlp:
+                nb_words = [
+                    w for w in self._notebook_pool_words() if w not in concepts
+                ]
+                if nb_words:
+                    verse_concepts = nb_words + list(concepts)
             idx = self.rng.randbelow(len(self.VERSE_TEMPLATES))
             spec = self.VERSE_TEMPLATES_TYPED[idx]
             picked, used, skipped = {}, set(), []
@@ -3231,7 +3381,7 @@ class Aethel:
                 if slot not in spec:
                     continue
                 pick = None
-                for cand in concepts:
+                for cand in verse_concepts:
                     if cand in used:
                         continue
                     cls = self._word_class(cand)
@@ -3250,16 +3400,18 @@ class Aethel:
                     pick = next(
                         (
                             w
-                            for w in concepts
+                            for w in verse_concepts
                             if w not in used
                             and self._word_class(w) != _grammar.SCAFFOLDING
                         ),
-                        concepts[0],
+                        verse_concepts[0],
                     )
                 picked[slot] = pick
                 used.add(pick)
             for slot in ("c1", "c2", "c3"):
-                picked.setdefault(slot, concepts[0] if slot == "c1" else picked["c1"])
+                picked.setdefault(
+                    slot, verse_concepts[0] if slot == "c1" else picked["c1"]
+                )
             if skipped:
                 self._note_catch(
                     "pos-noun",
@@ -3367,6 +3519,9 @@ class Aethel:
             self._note_catch(
                 violations[0][0], f"letter checked before sealing: {violations[0][1]}"
             )
+
+        # v0.31: words she wrote with become hers.
+        self._notebook_mark_generated(body, via=kind)
 
         fname = f"{self.tick_count:06d}_{kind}.txt"
         path = os.path.join(config.outbox_dir(), fname)
