@@ -66,6 +66,20 @@ FAIL-CLOSED. This module never substitutes a definition from anywhere
 but the WordNet reader it is handed; with no reader (or no synset) the
 definition is None and the entry still records the meeting. Absence
 is data, never a silent heuristic.
+
+COMPANIONS (v0.37, NLTK plan Phase 6a). An entry's "keeps company
+with" view — the entry lemma's strongest neighbors in her
+co-occurrence graph — is DERIVED at read time from the graph, never
+stored on the entry. The rejected alternative, caching the top
+neighbors per entry, would duplicate graph state into every entry:
+the graph prunes and reweights itself on every update, so a stored
+copy could only be kept honest by rewriting entries on every meal
+and every generated text, and a restart would have to prove the two
+copies agree. Derivation is a sort of at most COOC_NEIGHBOR_CAP
+(40) rows — microseconds — and it cannot drift, because there is
+exactly one graph. The view belongs to an ENTRY (a lemma she never
+pressed has no page to keep company on), so a lemma with no entry,
+or an entry whose lemma has no graph row, returns an empty list.
 """
 
 #: Graduation statuses, in order of intimacy.
@@ -211,6 +225,20 @@ class Notebook:
         return out
 
     # -- consumption ----------------------------------------------------
+    def companions(self, lemma, cooc, k=5):
+        """The entry's "keeps company with" view: the lemma's top-k
+        co-occurrence neighbors as [(neighbor, count)], derived from
+        the graph at read time (see the module docstring for why
+        nothing here is stored). Order is count desc, neighbor asc —
+        a pure function of the graph, so two reads of the same graph
+        agree exactly. Empty when the lemma has no entry here or no
+        row in the graph: absence is data, not an error."""
+        if lemma not in self.entries:
+            return []
+        row = (cooc or {}).get(lemma) or {}
+        ranked = sorted(row.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [(w, int(c)) for w, c in ranked[:k]]
+
     def usable_words(self, statuses=(KNOWN, HERS)):
         """Lemmas available to generation, hers first, then known,
         alphabetical inside each rank: her own words lead, and the

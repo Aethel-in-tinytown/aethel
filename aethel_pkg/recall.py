@@ -67,6 +67,32 @@ state, and a rebuilt Aethel inherits exactly the diversity her
 journal implies. The rejected alternative, persisted recall counts,
 would need its own fidelity proof and could disagree with the diary.
 
+PERSONAL ASSOCIATION (v0.37, NLTK plan Phase 6a). When the caller
+hands in her persisted co-occurrence graph (the counts she has kept
+since long before this phase — meals only, until 6a extended the
+coverage to her own writing), a third term personalizes the score:
+query lemmas whose graph neighbors include candidate lemmas earn a
+bonus. The arithmetic is deliberately kept on a short leash. Per
+query lemma, the best neighbor strength is count/(count +
+ASSOC_SATURATION) — a saturating function in [0, 1), so one shared
+meal already counts (0.2) but no single association, however often
+repeated, can approach 1 by itself; identical lemmas are excluded
+(they are already paid in full by the overlap term). The term is
+the mean of those bests over all query content lemmas. It enters
+through the headroom the base score leaves:
+
+    total = base + ASSOC_WEIGHT * assoc * (1 - base)
+
+so the bonus is at most ASSOC_WEIGHT (0.10) — strictly less than
+the WordNet term's own maximum contribution (0.25) — and it shrinks
+as the base score grows: an already-certain match cannot be pushed
+further by habit, and association alone can never outvote the
+0.75/0.25 evidence, only break the near-ties where personalization
+is the honest decider. A graph is an OPTIONAL argument everywhere:
+without one the term is exactly 0 and the score is the pre-6a
+score, bit for bit — which is what keeps the Phase 2 goldens and
+every caller that does not pass a graph untouched.
+
 DETERMINISM. No randomness anywhere in this module: ranking is
 (score desc, candidate id asc), every cap and sort carries an
 explicit tie-break, and scores are rounded to 6 decimals in the
@@ -92,6 +118,13 @@ from .notebook import wn_pos
 #: wording, and too blunt to lead.
 LEMMA_WEIGHT = 0.75
 WORDNET_WEIGHT = 0.25
+
+#: Phase 6a personal association: the bonus cap and the saturation
+#: constant of the per-pair strength count/(count + K). See the
+#: module docstring for why the bonus enters through the base
+#: score's headroom instead of as a third mixture weight.
+ASSOC_WEIGHT = 0.10
+ASSOC_SATURATION = 4.0
 
 #: A reading whose best belief scores below this does not earn a
 #: resemblance line in her narration. Calibration on her canonical
@@ -254,10 +287,55 @@ class SemanticRecall:
             counted += 1
         return (best_total / counted if counted else 0.0), best_path
 
-    def score(self, query_text, candidate_text, stats=None):
+    def _assoc_term(self, qmap, cmap, cooc):
+        """(assoc_score, evidence) — her own associations between
+        the query's lemmas and the candidate's, read off the
+        co-occurrence graph. The graph is symmetric by construction
+        (every update writes both directions), so one row lookup per
+        query lemma suffices. Pure function of the graph handed in;
+        an absent or empty graph scores exactly 0 with no evidence,
+        which is what makes the term opt-in per caller."""
+        if not cooc or not qmap or not cmap:
+            return 0.0, []
+        cand = set(cmap)
+        total = 0.0
+        evidence = []
+        for ql in sorted(qmap):
+            row = cooc.get(ql) or {}
+            best_lemma, best_count, best_strength = None, 0, 0.0
+            for cl in sorted(cand):
+                if cl == ql:
+                    continue
+                count = row.get(cl, 0)
+                if not count:
+                    continue
+                strength = count / (count + ASSOC_SATURATION)
+                if strength > best_strength:
+                    best_lemma, best_count, best_strength = (
+                        cl, count, strength,
+                    )
+            total += best_strength
+            if best_lemma is not None:
+                evidence.append(
+                    {
+                        "query_lemma": ql,
+                        "candidate_lemma": best_lemma,
+                        "count": int(best_count),
+                        "strength": round(best_strength, 6),
+                    }
+                )
+        evidence.sort(
+            key=lambda e: (-e["strength"], e["query_lemma"],
+                           e["candidate_lemma"])
+        )
+        return total / len(qmap), evidence
+
+    def score(self, query_text, candidate_text, stats=None, cooc=None):
         """(score, why) for one query/candidate pair. `stats` carries
         the corpus rarity weights; without one, the pair alone is the
-        corpus (every lemma equally rare — the honest degenerate)."""
+        corpus (every lemma equally rare — the honest degenerate).
+        `cooc`, when given, is her co-occurrence graph and earns the
+        bounded Phase 6a association bonus (module docstring)."""
         qmap = self.content_map(query_text)
         cmap = self.content_map(candidate_text)
         if stats is None:
@@ -278,7 +356,9 @@ class SemanticRecall:
             else 0.0
         )
         wordnet_score, best_path = self._wordnet_term(qmap, cmap, stats)
-        total = LEMMA_WEIGHT * lemma_score + WORDNET_WEIGHT * wordnet_score
+        base = LEMMA_WEIGHT * lemma_score + WORDNET_WEIGHT * wordnet_score
+        assoc_score, associations = self._assoc_term(qmap, cmap, cooc)
+        total = base + ASSOC_WEIGHT * assoc_score * (1.0 - base)
         why = {
             "shared_lemmas": [
                 {"lemma": l, "weight": round(stats.weight(l), 6)}
@@ -287,12 +367,14 @@ class SemanticRecall:
             "best_path": best_path,
             "lemma_score": round(lemma_score, 6),
             "wordnet_score": round(wordnet_score, 6),
+            "assoc_score": round(assoc_score, 6),
+            "associations": associations[:5],
         }
         return total, why
 
     # -- ranking ---------------------------------------------------------
     def recall(self, query_text, candidates, k=1, stats=None,
-               recent_ids=()):
+               recent_ids=(), cooc=None):
         """Top-k (candidate, score, why) for a query.
 
         `candidates` is an iterable of (candidate_id, text) pairs.
@@ -302,14 +384,15 @@ class SemanticRecall:
         penalty is applied BEFORE ranking, and the result carries
         both the adjusted and raw scores so the journal can show its
         work. Ranking: adjusted score desc, candidate id asc. No
-        randomness, ever."""
+        randomness, ever. `cooc` is forwarded to score() for the
+        Phase 6a association term."""
         candidates = list(candidates)
         if stats is None:
             stats = self.corpus_stats([t for _, t in candidates])
         recent = set(recent_ids)
         results = []
         for cid, text in candidates:
-            raw, why = self.score(query_text, text, stats)
+            raw, why = self.score(query_text, text, stats, cooc=cooc)
             penalized = cid in recent
             adjusted = raw * (1.0 - DIVERSITY_PENALTY) if penalized else raw
             why = dict(why)
@@ -338,6 +421,16 @@ def why_summary(why):
     parts.append(
         "lemma {lemma_score}, wordnet {wordnet_score}".format(**why)
     )
+    associations = why.get("associations") or []
+    if associations:
+        parts.append(
+            "her associations: "
+            + ", ".join(
+                "{query_lemma}~{candidate_lemma}".format(**a)
+                for a in associations
+            )
+            + f" (assoc {why.get('assoc_score')})"
+        )
     if why.get("diversity_penalized"):
         parts.append("diversity-penalized")
     return "; ".join(parts)

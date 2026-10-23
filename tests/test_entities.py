@@ -156,6 +156,9 @@ def make_bare(language=None, seed=42):
     a.rng_dreams = a.streams.stream("dreams")
     a.rng_forage = a.streams.stream("forage")
     a.concepts = {}
+    a.lemma_index = {}  # v0.37: every real NLTK organism carries one
+    # (set by _init_language_knowledge in __init__); Phase 6a's
+    # belief-settling cooc hook reads concept counts through it.
     a.beliefs = []
     a.dreams = []
     a.memory = []

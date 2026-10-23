@@ -47,6 +47,14 @@ class Aethel:
 
     COOC_CONCEPT_CAP = 300
     COOC_NEIGHBOR_CAP = 40
+    # v0.37 (Phase 6a): the weight one of HER OWN generated texts
+    # adds to each co-occurrence pair it contains. One text counts
+    # once per pair — presence, not token frequency, exactly as a
+    # meal counts once per pair — so a long letter cannot outweigh
+    # a shelf of reading, and her own words join the graph at the
+    # same rate the world's words do. Counts stay integers, so the
+    # persisted graph's shape (and every pre-6a state) is unchanged.
+    COOC_GENERATED_WEIGHT = 1
     DREAM_GIBBS_STEPS = 3
     DREAM_TEMPERATURE = 1.0
 
@@ -634,8 +642,17 @@ class Aethel:
         self.say("I climb into my bed above the bookshop. The town goes quiet.")
         journal("fell_asleep", n=n)
 
-    def _update_cooc(self, meal_words):
-        """Update the bounded concept co-occurrence graph from one meal."""
+    def _update_cooc(self, meal_words, weight=1):
+        """Update the bounded concept co-occurrence graph from one text.
+
+        Born for meals (what she reads); since v0.37 (Phase 6a) the
+        same path also takes her own generated texts, handed in by
+        _cooc_learn_generated — one update path, one set of caps, one
+        canonicalization, so the graph has exactly one semantics no
+        matter who produced the words. `weight` is the per-pair
+        increment (1 for a meal and, per COOC_GENERATED_WEIGHT, 1 for
+        a generated text). Returns the participating words (deduped,
+        top-concept filtered, capped), in first-occurrence order."""
         top = set(
             w
             for w, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
@@ -652,9 +669,9 @@ class Aethel:
         for i, a in enumerate(seen):
             row = self.cooc.setdefault(a, {})
             for b in seen[i + 1 :]:
-                row[b] = row.get(b, 0) + 1
+                row[b] = row.get(b, 0) + weight
                 back = self.cooc.setdefault(b, {})
-                back[a] = back.get(a, 0) + 1
+                back[a] = back.get(a, 0) + weight
 
         for w in list(self.cooc):
             if w not in top:
@@ -665,6 +682,59 @@ class Aethel:
                     : self.COOC_NEIGHBOR_CAP
                 ]
                 self.cooc[w] = dict(keep)
+        return seen
+
+    def _cooc_learn_generated(self, text, via):
+        """Learn co-occurrence from one text SHE generated (Phase 6a).
+
+        The graph used to learn only from meals — what the world
+        fed her. Since v0.37 it also learns from her own output:
+        dreams on waking, the letters/notes she composes (verses
+        included — a verse reaches the postbox as a letter body),
+        and beliefs at the moment they settle. The hook sits beside
+        each text's existing journal event, and the update is a pure
+        function of that journaled text: same text, same edges,
+        regardless of wall clock.
+
+        GATED to NLTK mode, and the gate is the argument, not an
+        accident: her generated texts exist in both backends, so an
+        ungated hook would rewrite HEURISTIC trajectories too (the
+        cooc graph feeds dream generation there) and break the
+        bit-identical parity every phase since v0.31 has kept. In
+        heuristic mode this returns before analyzing, touching
+        nothing: no state, no journal, no RNG.
+
+        The words are the text's content lemmas from the language
+        Analysis — the backend's own content predicate, the same
+        filter meals pass — deduped in first-occurrence order, then
+        handed to the one update path (_update_cooc), whose
+        top-concept filter and caps apply unchanged: a word outside
+        her concept vocabulary forms no edges, whoever wrote it.
+        The predicate is fetched the way recall fetches it (getattr):
+        a backend without one admits all its tokens — only test
+        doubles are so built; the real NLTK backend always has one."""
+        if not self._nlp or not text:
+            return
+        analysis = self.language.analyze(text)
+        is_content = getattr(self.language, "content", None)
+        lemmas = []
+        seen = set()
+        for token in analysis.tokens:
+            if is_content is not None and not is_content(token):
+                continue
+            if token.lemma not in seen:
+                seen.add(token.lemma)
+                lemmas.append(token.lemma)
+        if len(lemmas) < 2:
+            return
+        used = self._update_cooc(lemmas, weight=self.COOC_GENERATED_WEIGHT)
+        if used:
+            journal(
+                "cooc_learned",
+                n=self.tick_count,
+                via=via,
+                words=len(used),
+            )
 
     def _cooc_pick(self, word, pool):
         """Sample a concept neighbor with temperature-adjusted co-occurrence weights."""
@@ -1034,6 +1104,10 @@ class Aethel:
         journal("dream", n=self.tick_count, text=text[:300])
         # v0.31: words she dreamed with become hers.
         self._notebook_mark_generated(text, via="dream")
+        # v0.37: the dream's own words join the co-occurrence graph
+        # (after generation — the dream was composed from the graph
+        # as it stood when she fell asleep).
+        self._cooc_learn_generated(text, via="dream")
         return text
 
     def sleep_tick(self, n):
@@ -1148,6 +1222,8 @@ class Aethel:
                     )
                 elif lesson not in self.beliefs:
                     self.beliefs.append(lesson)
+                    # v0.37: a settled belief's words join the graph.
+                    self._cooc_learn_generated(lesson, via="belief")
                 self.say(
                     f"I carry the dream to the stone table. Nine voices "
                     f"confer... they agree: my dream of {c1} and {c2} is "
@@ -1561,6 +1637,8 @@ class Aethel:
             belief = f"From {cur['title']}: {lesson}"
             if belief not in self.beliefs:
                 self.beliefs.append(belief)
+                # v0.37: a settled belief's words join the graph.
+                self._cooc_learn_generated(belief, via="belief")
                 # v0.34: the new belief attaches to the book's author
                 # (a gazetteer entity) and to any gazetteer entities
                 # its own text mentions. NLTK only; the helper gates.
@@ -1972,6 +2050,8 @@ class Aethel:
                 belief = f"I understand {g['term']} now"
                 if belief not in self.beliefs:
                     self.beliefs.append(belief)
+                    # v0.37: a settled belief's words join the graph.
+                    self._cooc_learn_generated(belief, via="belief")
                 self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.10)
                 print(f"[goal complete] {belief} — vitality surges", flush=True)
                 self.say(
@@ -2006,6 +2086,8 @@ class Aethel:
                 belief = f"I believe: {action[:70]}"
                 if belief not in self.beliefs:
                     self.beliefs.append(belief)
+                    # v0.37: a settled belief's words join the graph.
+                    self._cooc_learn_generated(belief, via="belief")
                     print(f"[belief adopted] {belief}", flush=True)
         else:
             print("[MORAL SUFFOCATION] — action rejected.", flush=True)
@@ -2014,6 +2096,8 @@ class Aethel:
             belief = f"I refuse: {action[:70]}"
             if belief not in self.beliefs:
                 self.beliefs.append(belief)
+                # v0.37: a settled belief's words join the graph.
+                self._cooc_learn_generated(belief, via="belief")
         return ok
 
     def moral_self_test(self):
@@ -3114,6 +3198,16 @@ class Aethel:
                 n=self.tick_count,
                 lemma=entry["lemma"],
                 via=via,
+                # v0.37: the company the word kept when it became
+                # hers — the notebook's derived companions view,
+                # read off the graph as it stands at this moment
+                # (before this text's own edges are learned).
+                companions=[
+                    w
+                    for w, _ in nb.companions(
+                        entry["lemma"], getattr(self, "cooc", None) or {}
+                    )
+                ],
             )
 
     def _notebook_pool_words(self):
@@ -3201,6 +3295,12 @@ class Aethel:
             k=1,
             stats=stats,
             recent_ids=[c for c in recent_ids if c],
+            # v0.37: her own co-occurrence graph personalizes recall
+            # (bounded association term — see recall.py). The graph
+            # is state, handed in per call, never cached in the
+            # engine, so a restart recalls from the rebuilt graph
+            # exactly as the interrupted life would have.
+            cooc=self.cooc,
         )
         if not results or results[0].raw_score <= 0:
             return None
@@ -4218,6 +4318,10 @@ class Aethel:
 
         # v0.31: words she wrote with become hers.
         self._notebook_mark_generated(body, via=kind)
+        # v0.37: the letter's own words join the co-occurrence graph.
+        # A verse reaches the postbox as a letter body, so verses are
+        # covered by this same hook.
+        self._cooc_learn_generated(body, via=kind)
 
         fname = f"{self.tick_count:06d}_{kind}.txt"
         path = os.path.join(config.outbox_dir(), fname)
