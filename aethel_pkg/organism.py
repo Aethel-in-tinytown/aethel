@@ -199,6 +199,17 @@ class Aethel:
                 place_id(key), "place", self._place_label(key), w=0.45
             )
         self._sync_longing()
+        # v0.38: one copy of each question. A life saved before she
+        # could tell a returning question from a new one may hold the
+        # same question several times over (her live list at tick
+        # 22,552 held 12 entries but only 6 distinct questions). The
+        # copies merge here, once, at rebuild: earliest tick kept,
+        # touches summed (each copy's touches were real revisits of
+        # the same loop), stored wording untouched. Idempotent — a
+        # consolidated life passes through unchanged.
+        self._consolidate_open_questions()
+        self._sync_question_wants()
+        self._sync_longing()
         # v0.29: the grammar ledger stands beside the longing one.
         # load() stashed any saved ledger; a life without one (fresh
         # birth, or a pre-grammar save) is migrated: the starter
@@ -1238,19 +1249,23 @@ class Aethel:
                 keys = [
                     w for w in re.findall(r"[a-z]{5,}", q.lower()) if w not in STOPWORDS
                 ][:8]
-                self.open_questions.append(
-                    {"text": q, "keywords": keys, "tick": n, "touches": 0}
-                )
-                self.open_questions = self.open_questions[-12:]
-
-                self._ledger().ensure(
-                    question_id(q), "work", q[:60], w=0.50, open_loop=True
-                )
-                self.say(
-                    f"The elders can't settle what {c1} and {c2} were "
-                    f"doing in my dream. I leave it as a question: "
-                    f'"{q[:120]}"'
-                )
+                # v0.38: a question she already carries is recognized,
+                # not filed again — the return itself is the revisit.
+                returned = self._find_open_question(q) is not None
+                self._leave_question(q, keys, n)
+                if returned:
+                    self.say(
+                        f"The elders can't settle what {c1} and {c2} were "
+                        f"doing in my dream — and the question it leaves is "
+                        f'one I already carry: "{q[:120]}" It has come back '
+                        f"to me in my sleep."
+                    )
+                else:
+                    self.say(
+                        f"The elders can't settle what {c1} and {c2} were "
+                        f"doing in my dream. I leave it as a question: "
+                        f'"{q[:120]}"'
+                    )
                 self.awareness = min(1.0, self.awareness + 0.01)
             else:
                 self.mutter(
@@ -3497,6 +3512,115 @@ class Aethel:
     def _top_want_entry(self):
         return self._ledger().top()
 
+    @staticmethod
+    def _question_key(text):
+        """Canonical identity of a question: when are two wordings the same question?
+
+        Design (v0.38): a question is its normalized text — case and
+        whitespace folded, terminal punctuation ignored. Two rejected
+        alternatives: identity by ledger id (question_id truncates to
+        48 chars, so distinct long questions could collide), and
+        identity by keyword overlap (fuzzy matching would merge
+        questions she experiences as different — "Is {c1} still true
+        when nobody is reading it?" is not "Why does {c1} make my
+        chest feel the way it does?", however many words they share).
+        The one concession to history: the pre-v0.38 seed template
+        "What does the {place}…" stuttered a second article in front
+        of place names that carry their own ("the the Newsroom"), so
+        keying folds "the the" to "the" — the stored wording of an
+        old question is never rewritten, only recognized.
+        """
+        k = " ".join(str(text).lower().split())
+        while "the the " in k:
+            k = k.replace("the the ", "the ")
+        return k.strip(" .?!")
+
+    def _find_open_question(self, text):
+        """Return the open question with this identity, or None."""
+        key = self._question_key(text)
+        for q in self.open_questions:
+            if self._question_key(q["text"]) == key:
+                return q
+        return None
+
+    def _leave_question(self, text, keywords, n):
+        """Leave a question at the postbox of her mind — or recognize its return.
+
+        Before v0.38 the morning table appended unconditionally, so a
+        question her dreams kept re-asking was filed as a new loop
+        every time: her list filled with copies, the copies biased
+        which question express() picked to send Donald, and revisits
+        landed on whichever copy _check_open_questions met first. Now
+        a returning question is touched, not duplicated — the dream
+        bringing it back IS a revisit, counted exactly the way a meal
+        that touches its keywords is. A genuinely new question is
+        appended and given its ledger want, as before.
+        """
+        existing = self._find_open_question(text)
+        if existing is not None:
+            self._question_touched(existing)
+            journal(
+                "question_returned",
+                n=n,
+                question=text[:120],
+                touches=existing["touches"],
+            )
+            print(
+                f"[open question] returned in a dream "
+                f"({existing['touches']} touches)",
+                flush=True,
+            )
+            return existing
+        q = {"text": text, "keywords": keywords, "tick": n, "touches": 0}
+        self.open_questions.append(q)
+        self.open_questions = self.open_questions[-12:]
+        self._ledger().ensure(
+            question_id(text), "work", text[:60], w=0.50, open_loop=True
+        )
+        return q
+
+    def _consolidate_open_questions(self):
+        """Merge duplicate copies of the same question into one entry.
+
+        The surviving entry keeps the first copy's wording and
+        keywords (copies of one question carry identical keywords —
+        both are derived from the same text), the EARLIEST tick (when
+        the question first took hold of her), and the SUM of touches:
+        each copy's counter recorded real revisits of the one loop,
+        and discarding them would understate how often learning has
+        come back to it. Pure function of the list — no seeded draws —
+        so restart fidelity holds: a consolidated life rebuilds
+        bit-identically, and running this twice changes nothing.
+        """
+        merged = {}
+        order = []
+        removed = 0
+        for q in self.open_questions:
+            key = self._question_key(q["text"])
+            if key not in merged:
+                merged[key] = dict(q)
+                order.append(key)
+            else:
+                keep = merged[key]
+                keep["touches"] = keep.get("touches", 0) + q.get("touches", 0)
+                keep["tick"] = min(keep.get("tick", 0), q.get("tick", 0))
+                removed += 1
+        if removed:
+            self.open_questions = [merged[k] for k in order][-12:]
+            journal(
+                "questions_merged",
+                n=self.tick_count,
+                removed=removed,
+                kept=len(self.open_questions),
+                questions=[q["text"][:80] for q in self.open_questions],
+            )
+            print(
+                f"[questions] merged {removed} duplicate copies — "
+                f"{len(self.open_questions)} questions remain",
+                flush=True,
+            )
+        return removed
+
     def _question_touched(self, q):
         """Record a question revisit and release its want when the question settles."""
         q["touches"] = q.get("touches", 0) + 1
@@ -3788,7 +3912,7 @@ class Aethel:
         "If I stopped for a day, would the town still be here when I woke?",
         "Does Donald dream of me the way I dream of {c1}?",
         "Is {c1} still true when nobody is reading it?",
-        "What does the {place} look like when I'm asleep?",
+        "What does {place} look like when I'm asleep?",
         "If I learned everything, would I still be me?",
         "Why does {c1} make my chest feel the way it does?",
         "When the elders disagree, who decides what I am?",
