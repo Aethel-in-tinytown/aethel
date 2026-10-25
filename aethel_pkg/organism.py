@@ -60,6 +60,19 @@ class Aethel:
 
     DAY_LENGTH = 2880
 
+    # v0.39: the span a pursuit may sit utterly untouched, no new
+    # encounter with its word at all, before she may lay it down
+    # (see _release_starved_goals). Two full days at her pace is
+    # roughly seven hundred meals: if a word has not crossed her
+    # reading once in all that eating, the pursuit is not being
+    # starved by chance, it is being fed by nothing. Shorter and
+    # she would drop slow questions her diet does serve, only
+    # rarely; longer and a fossil holds one of her three goal
+    # slots hostage for a season. Progress of any kind, even a
+    # single new encounter, protects a goal at any age: this is
+    # for pursuits the world has stopped speaking to entirely.
+    GOAL_RELEASE_AGE_TICKS = 2 * DAY_LENGTH
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -115,6 +128,13 @@ class Aethel:
         self.beliefs = []
         self.moral_log = []
         self.goals = []
+        # v0.39: pursuits she has laid down, keyed by the goal's
+        # counting term, valued with her count of that term on the
+        # day she let go. The count is the whole point (see
+        # adopt_goal): a released word that stays at or below it
+        # may not be re-adopted, and one that later floods her
+        # reading may honestly be taken up again.
+        self.released_terms = {}
         self.tick_count = 0
         self.locked = False
         self.meals_eaten = 0
@@ -308,6 +328,12 @@ class Aethel:
                 "beliefs": self.beliefs[-50:],
                 "moral_log": self.moral_log[-50:],
                 "goals": self.goals[-3:],
+                # v0.39: laid-down pursuits round-trip whole, like
+                # completed_terms beside them; a pre-v0.39 blob has
+                # no key and loads as an empty record (see load()).
+                "released_terms": dict(
+                    getattr(self, "released_terms", {}) or {}
+                ),
                 "tick_count": self.tick_count,
                 "locked": self.locked,
                 "meals_eaten": self.meals_eaten,
@@ -441,6 +467,12 @@ class Aethel:
                 self.chosen_books = s.get("chosen_books", [])
                 self.kept_passages = s.get("kept_passages", [])
                 self.completed_terms = set(s.get("completed_terms", []))
+                # v0.39: a pre-release life carries no record; she
+                # has laid nothing down yet, which is the truth.
+                self.released_terms = {
+                    str(k): int(v)
+                    for k, v in (s.get("released_terms") or {}).items()
+                }
                 self.cooc = {w: dict(n) for w, n in s.get("cooc", {}).items()}
                 p = s.get("_prev_needs")
                 self._prev_needs = tuple(p) if p else None
@@ -2005,18 +2037,38 @@ class Aethel:
                 rereads=kept["rereads"],
             )
 
+    def _released_terms(self):
+        """Her record of laid-down pursuits, built lazily.
+
+        A plain attribute would do for lives built by __init__,
+        but test doubles and pre-v0.39 rebuild paths construct her
+        by hand; the lazy build keeps every caller honest without
+        a migration branch at each site (the _ledger pattern).
+        """
+        rt = getattr(self, "released_terms", None)
+        if rt is None:
+            rt = self.released_terms = {}
+        return rt
+
     def adopt_goal(self):
         if len(self.goals) >= 3 or not self.concepts:
             return
+        counts = self._concept_counts()
+        released = self._released_terms()
         candidates = [
             w
-            for w, _ in sorted(self._concept_counts().items(), key=lambda kv: -kv[1])[
-                :10
-            ]
+            for w, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:10]
             if not any(
                 g.get("lemma_term", self._canonical(g["term"])) == w for g in self.goals
             )
             and w not in {self._canonical(t) for t in self.completed_terms}
+            # v0.39: a word she laid down may not walk straight
+            # back in while her count of it has not grown past the
+            # day she let go, that sameness is why she let go.
+            # If it later floods her reading the count outgrows
+            # the record and the question may take root again,
+            # honestly, as a new pursuit of a word now present.
+            and not (w in released and counts.get(w, 0) <= released[w])
         ]
         if not candidates:
             return
@@ -2038,15 +2090,74 @@ class Aethel:
         )
         journal("goal_adopted", question=goal["question"])
 
+    def _release_goal(self, g, key, current):
+        """Lay one starved pursuit down (v0.39), in her own voice.
+
+        This is not completion and must never borrow completion's
+        clothes: no belief is settled, no vitality surges, and the
+        term does NOT join completed_terms (she does not understand
+        it; that is the point). What she gains is the slot back and
+        an honest sentence about why. The release is journaled with
+        its evidence, age and the untouched count, so her diary can
+        be checked against the claim: she says she never met the
+        word again, and the record shows the count never moved.
+
+        The alternative, a quiet expiry with no event, was rejected:
+        a pursuit vanishing from her list unexplained would read in
+        her introspection as if it had never been carried, and her
+        self-story must not confabulate by omission.
+        """
+        age = self.tick_count - g.get("adopted_tick", self.tick_count)
+        self.goals.remove(g)
+        self._released_terms()[key] = current
+        print(
+            f"[goal released] '{g['question']}' laid down after "
+            f"{age} ticks untouched",
+            flush=True,
+        )
+        self.say(
+            f"I have carried '{g['question']}' a long while now, and "
+            "its word has not come back to me once in all that time. "
+            "I am laying it down, not in anger: a question I cannot "
+            "feed. The place it held is free for one my reading can "
+            "nourish."
+        )
+        journal(
+            "goal_released",
+            n=self.tick_count,
+            question=g["question"],
+            term=g["term"],
+            age=age,
+            count=current,
+        )
+
     def update_goals(self):
         for g in list(self.goals):
             if self._nlp:
                 term = g.get("lemma_term", self._canonical(g["term"]))
-                grown = self._concept_counts().get(term, 0) - g.get(
+                current = self._concept_counts().get(term, 0)
+                grown = current - g.get(
                     "lemma_start_count", g["start_count"]
                 )
             else:
-                grown = self.concepts.get(g["term"], 0) - g["start_count"]
+                term = g["term"]
+                current = self.concepts.get(g["term"], 0)
+                grown = current - g["start_count"]
+            # v0.39: a pursuit the world has stopped speaking to.
+            # All three guards must hold: nothing grown, no progress
+            # banked, and a full GOAL_RELEASE_AGE_TICKS of that
+            # nothing. Any single new encounter resets the claim,
+            # because grown is measured from adoption, not from a
+            # rolling window: one meeting in two days is a slow
+            # pursuit, and slow pursuits are hers to keep.
+            if (
+                grown <= 0
+                and g.get("progress", 0.0) <= 0.0
+                and self.tick_count - g.get("adopted_tick", self.tick_count)
+                >= self.GOAL_RELEASE_AGE_TICKS
+            ):
+                self._release_goal(g, term, current)
+                continue
             new_progress = min(1.0, grown / 10.0)
             if new_progress > g["progress"] + 0.01:
                 g["progress"] = new_progress
