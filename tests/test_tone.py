@@ -17,6 +17,7 @@ Isolation: in-memory stores via set_store and a temp AETHEL_HOME for
 every organism built here — her live diary is never instantiated
 against, and the audit script is the only reader of her real db.
 """
+
 import contextlib
 import hashlib
 import io
@@ -30,13 +31,11 @@ from unittest.mock import patch
 import aethel_pkg.organism as org_mod
 from aethel_pkg import config, tone as tone_mod
 from aethel_pkg.journal import set_store
-from aethel_pkg.language_resources import LanguageError, verify_resource
+from aethel_pkg.language_resources import LanguageError, data_dir, verify_resource
 from aethel_pkg.organism import Aethel
 from aethel_pkg.store import Store
 
 from helpers import StubWorld
-
-PROVISIONED = Path.home() / "workspace" / "aethel" / "nltk_data"
 
 HAPPY = (
     "It was a bright and lovely morning, and she was filled with joy "
@@ -48,17 +47,56 @@ BLEAK = (
 )
 
 
+def provisioned_root():
+    """The pinned data tree the runtime itself resolves, or None.
+
+    Resolved through language_resources.data_dir() (AETHEL_NLTK_DATA,
+    else the AETHEL_HOME tree), never a hard-coded developer path.
+    CI provisions exactly the resolved directory in its nltk jobs
+    (the workflow's --download step), so the tone integration tests
+    run there against the same pinned bytes; where nothing is
+    provisioned, they skip. This helper replaces a module constant
+    that named one machine's home directory: on every other machine
+    the provisioning tests crashed reading bytes that were never
+    there, and the organism tests skipped even when CI had data
+    provisioned at the resolved root.
+    """
+    root = data_dir()
+    return root if root.is_dir() else None
+
+
+def require_nltk_backend():
+    """Skip unless the real NLTK backend constructs in this process.
+
+    Constructing the backend is the check (the suite-wide pattern,
+    test_language.TestNltkLanguage): it fails closed with
+    LanguageError both when the nltk package is absent (the CI
+    heuristic jobs install no [nlp] extra) and when the pinned
+    resources are missing or mismatched. A directory check alone
+    sees neither half, which is how ungated NLTK tests came to
+    error in heuristic CI instead of skipping.
+    """
+    from aethel_pkg.language import NltkLanguage
+
+    try:
+        NltkLanguage()
+    except LanguageError as exc:
+        raise unittest.SkipTest(f"Optional NLTK integration: {exc}")
+
+
 def nlp_data_env(testcase):
     """Point the backend at the provisioned, pinned data (read-only)."""
-    if "AETHEL_NLTK_DATA" not in os.environ and PROVISIONED.is_dir():
-        env = patch.dict(os.environ, {"AETHEL_NLTK_DATA": str(PROVISIONED)})
-        env.start()
-        testcase.addCleanup(env.stop)
+    if "AETHEL_NLTK_DATA" not in os.environ:
+        root = provisioned_root()
+        if root is not None:
+            env = patch.dict(os.environ, {"AETHEL_NLTK_DATA": str(root)})
+            env.start()
+            testcase.addCleanup(env.stop)
 
 
 def real_analyzer(testcase):
     try:
-        return tone_mod.load_analyzer(PROVISIONED)
+        return tone_mod.load_analyzer(data_dir())
     except tone_mod.ToneUnavailable as exc:
         raise unittest.SkipTest(f"Optional NLTK integration: {exc}")
 
@@ -66,14 +104,15 @@ def real_analyzer(testcase):
 # ------------------------------------------------------- provisioning
 class TestProvisioning(unittest.TestCase):
     def test_pinned_lexicon_verifies(self):
-        if not PROVISIONED.is_dir():
+        root = provisioned_root()
+        if root is None:
             self.skipTest("NLTK data not provisioned")
-        digest = verify_resource(PROVISIONED, "vader_lexicon")
+        digest = verify_resource(root, "vader_lexicon")
         self.assertEqual(
             digest,
             "8adba4294eef3964d820bf655e37e61bdc3a341994356af59b74fb3b4a36ce5c",
         )
-        lexicon = PROVISIONED / tone_mod.LEXICON_RELATIVE
+        lexicon = root / tone_mod.LEXICON_RELATIVE
         self.assertEqual(
             hashlib.sha256(lexicon.read_bytes()).hexdigest(),
             "0aabac74cd95def2dbedc04ce55e39698d91113ffadb6d86b87dd337c4d2184d",
@@ -84,7 +123,7 @@ class TestProvisioning(unittest.TestCase):
         target = root / tone_mod.LEXICON_RELATIVE
         target.parent.mkdir(parents=True)
         if mode == "corrupt":
-            data = (PROVISIONED / tone_mod.LEXICON_RELATIVE).read_bytes()
+            data = (provisioned_root() / tone_mod.LEXICON_RELATIVE).read_bytes()
             target.write_bytes(data[:-50] + b"tampered" + data[-42:])
         # mode == "missing": write nothing at all
         return root
@@ -94,6 +133,8 @@ class TestProvisioning(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
 
     def test_corrupt_lexicon_fails_verification(self):
+        if provisioned_root() is None:
+            self.skipTest("NLTK data not provisioned")
         root = self._broken_root("corrupt")
         with self.assertRaises(LanguageError):
             verify_resource(root, "vader_lexicon")
@@ -113,20 +154,20 @@ class TestBootWithoutTone(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not PROVISIONED.is_dir():
-            raise unittest.SkipTest("NLTK data not provisioned")
+        require_nltk_backend()
+        cls.src_root = provisioned_root()
 
     def _linked_root(self, corrupt):
         """A full data tree: real copies of the core files (verify
         rejects symlinks, so copies carry the pinned bytes) and a
         real, optionally tampered, copy of the lexicon."""
         root = Path(self._tmp.name) / ("bad" if corrupt else "gone")
-        for src in PROVISIONED.rglob("*"):
+        for src in self.src_root.rglob("*"):
             if not src.is_file():
                 continue
-            dst = root / src.relative_to(PROVISIONED)
+            dst = root / src.relative_to(self.src_root)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            if src == PROVISIONED / tone_mod.LEXICON_RELATIVE:
+            if src == self.src_root / tone_mod.LEXICON_RELATIVE:
                 if corrupt:
                     data = src.read_bytes()
                     dst.write_bytes(data[:-50] + b"tampered" + data[-42:])
@@ -146,13 +187,17 @@ class TestBootWithoutTone(unittest.TestCase):
 
     def _boot(self, corrupt):
         root = self._linked_root(corrupt)
-        with patch.dict(
-            os.environ,
-            {"AETHEL_HOME": self.home.name, "AETHEL_NLTK_DATA": str(root)},
-        ), contextlib.redirect_stdout(io.StringIO()):
+        with (
+            patch.dict(
+                os.environ,
+                {"AETHEL_HOME": self.home.name, "AETHEL_NLTK_DATA": str(root)},
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             config.ensure_dirs()
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="nltk")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="nltk"
+            )
             self.assertEqual(a.language.name, "nltk")  # she booted
             analysis = a.language.analyze(HAPPY)
             self.assertIsNone(a._tone_feed(analysis, "classic"))
@@ -193,16 +238,14 @@ class TestAnnotation(unittest.TestCase):
         self.assertIsNotNone(bleak["strongest_negative_word"])
 
     def test_strongest_word_valence_beats_order(self):
-        analyzer = StubAnalyzer({"good": 1.9, "great": 3.0,
-                                 "bad": -1.5, "awful": -2.0})
+        analyzer = StubAnalyzer({"good": 1.9, "great": 3.0, "bad": -1.5, "awful": -2.0})
         ann = tone_mod.annotate("good things, great things", analyzer)
         self.assertEqual(ann["strongest_positive_word"], "great")
         ann = tone_mod.annotate("bad luck and awful luck", analyzer)
         self.assertEqual(ann["strongest_negative_word"], "awful")
 
     def test_strongest_word_tie_breaks_by_first_occurrence(self):
-        analyzer = StubAnalyzer({"good": 2.0, "kind": 2.0,
-                                 "bad": -2.0, "sad": -2.0})
+        analyzer = StubAnalyzer({"good": 2.0, "kind": 2.0, "bad": -2.0, "sad": -2.0})
         ann = tone_mod.annotate("kind words and good words", analyzer)
         self.assertEqual(ann["strongest_positive_word"], "kind")
         ann = tone_mod.annotate("good words and kind words", analyzer)
@@ -234,23 +277,34 @@ class TestJournaling(unittest.TestCase):
     def _meal(self, a, text=HAPPY):
         meal = {"source": "classic", "title": "Fixture", "text": text}
         with contextlib.redirect_stdout(io.StringIO()):
-            with patch.object(a, "forage_classic", return_value=meal), \
-                    patch.object(org_mod, "forage", return_value=meal), \
-                    patch.object(org_mod, "forage_news", return_value=meal), \
-                    patch.object(org_mod, "forage_school", return_value=meal):
+            with (
+                patch.object(a, "forage_classic", return_value=meal),
+                patch.object(org_mod, "forage", return_value=meal),
+                patch.object(org_mod, "forage_news", return_value=meal),
+                patch.object(org_mod, "forage_school", return_value=meal),
+            ):
                 a.forage_and_eat()
 
     def test_nltk_reading_journals_exactly_one_tone_event(self):
+        require_nltk_backend()
         with contextlib.redirect_stdout(io.StringIO()):
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="nltk")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="nltk"
+            )
         self._meal(a)
         rows = self.store.recent(events=("tone",))
         self.assertEqual(len(rows), 1)
         tick, _, d = rows[0]
         self.assertEqual(tick, a.tick_count)
-        for field in ("source", "compound", "pos", "neu", "neg",
-                      "top_pos_word", "top_neg_word"):
+        for field in (
+            "source",
+            "compound",
+            "pos",
+            "neu",
+            "neg",
+            "top_pos_word",
+            "top_neg_word",
+        ):
             self.assertIn(field, d)
         self.assertEqual(d["source"], "classic")
         self.assertGreater(d["compound"], 0)
@@ -261,11 +315,14 @@ class TestJournaling(unittest.TestCase):
 
     def test_heuristic_reading_journals_no_tone_and_never_loads(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="heuristic")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+            )
         boom = AssertionError("tone touched in heuristic mode")
-        with patch.object(tone_mod, "load_analyzer", side_effect=boom), \
-                patch.object(tone_mod, "annotate", side_effect=boom):
+        with (
+            patch.object(tone_mod, "load_analyzer", side_effect=boom),
+            patch.object(tone_mod, "annotate", side_effect=boom),
+        ):
             self._meal(a)
         self.assertEqual(self.store.recent(events=("tone",)), [])
         self.assertEqual(self.store.recent(events=("tone_unavailable",)), [])
@@ -290,8 +347,7 @@ MEALS = {
 
 
 def canned(source):
-    return {"source": source, "title": f"Fixture {source}",
-            "text": MEALS[source]}
+    return {"source": source, "title": f"Fixture {source}", "text": MEALS[source]}
 
 
 def scrub(obj):
@@ -309,33 +365,38 @@ def run_life(home, ticks, tone_enabled=True):
         set_store(store)
         try:
             patches = [
-                patch.object(Aethel, "forage_classic",
-                             lambda self: canned("classic")),
-                patch.object(org_mod, "forage",
-                             lambda rng=None: canned("wikipedia")),
-                patch.object(org_mod, "forage_news",
-                             lambda rng=None: canned("newsroom")),
-                patch.object(org_mod, "forage_school",
-                             lambda rng=None: canned("schoolhouse")),
+                patch.object(Aethel, "forage_classic", lambda self: canned("classic")),
+                patch.object(org_mod, "forage", lambda rng=None: canned("wikipedia")),
+                patch.object(
+                    org_mod, "forage_news", lambda rng=None: canned("newsroom")
+                ),
+                patch.object(
+                    org_mod, "forage_school", lambda rng=None: canned("schoolhouse")
+                ),
             ]
             if not tone_enabled:
-                patches.append(patch.object(
-                    Aethel, "_tone_feed",
-                    lambda self, analysis, source: None))
+                patches.append(
+                    patch.object(
+                        Aethel, "_tone_feed", lambda self, analysis, source: None
+                    )
+                )
             for p in patches:
                 p.start()
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    a = Aethel(StubWorld(), parents=("Donald",),
-                               seed=42, language_backend="nltk")
+                    a = Aethel(
+                        StubWorld(),
+                        parents=("Donald",),
+                        seed=42,
+                        language_backend="nltk",
+                    )
                     for _ in range(ticks):
                         a.tick()
             finally:
                 for p in patches:
                     p.stop()
             snap = {
-                "journal": [(t, e, scrub(d))
-                            for t, e, d in store.recent(limit=10 ** 9)],
+                "journal": [(t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)],
                 "state": scrub(store.load_blob("state")),
             }
             store.close()
@@ -347,8 +408,7 @@ def run_life(home, ticks, tone_enabled=True):
 class TestFlagOffZeroEffect(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not PROVISIONED.is_dir():
-            raise unittest.SkipTest("NLTK data not provisioned")
+        require_nltk_backend()
 
     def setUp(self):
         nlp_data_env(self)
@@ -358,14 +418,12 @@ class TestFlagOffZeroEffect(unittest.TestCase):
         seam disabled — identical state, identical journal except
         the 'tone' events themselves."""
         self.assertFalse(config.TONE_EFFECTS_ENABLED)  # shipped default
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             on = run_life(h1, 130, tone_enabled=True)
             off = run_life(h2, 130, tone_enabled=False)
         tone_events = [row for row in on["journal"] if row[1] == "tone"]
         self.assertGreater(len(tone_events), 0)
-        self.assertEqual([row for row in off["journal"] if row[1] == "tone"],
-                         [])
+        self.assertEqual([row for row in off["journal"] if row[1] == "tone"], [])
         self.assertEqual(
             [row for row in on["journal"] if row[1] != "tone"],
             off["journal"],
@@ -391,8 +449,9 @@ class TestEffectsFlagOn(unittest.TestCase):
 
     def _organism_with_ache(self, ache=0.8):
         with contextlib.redirect_stdout(io.StringIO()):
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="heuristic")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+            )
         a._ledger().top()["ache"] = ache
         a._sync_longing()
         return a
@@ -418,19 +477,20 @@ class TestEffectsFlagOn(unittest.TestCase):
         for _ in range(10):
             total += abs(tone_mod.apply_tone_effects(a, {"compound": -1.0}))
         self.assertLessEqual(total, tone_mod.LONGING_DAILY_CAP + 1e-9)
-        self.assertAlmostEqual(a._tone_fx["applied"],
-                               min(total, tone_mod.LONGING_DAILY_CAP),
-                               places=9)
+        self.assertAlmostEqual(
+            a._tone_fx["applied"], min(total, tone_mod.LONGING_DAILY_CAP), places=9
+        )
         # A new simulated day resets the cap.
         a.tick_count += a.DAY_LENGTH
-        self.assertNotEqual(
-            tone_mod.apply_tone_effects(a, {"compound": -1.0}), 0.0)
+        self.assertNotEqual(tone_mod.apply_tone_effects(a, {"compound": -1.0}), 0.0)
 
     def test_wiring_through_tone_feed_when_flag_on(self):
         nlp_data_env(self)
+        require_nltk_backend()
         with contextlib.redirect_stdout(io.StringIO()):
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="nltk")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="nltk"
+            )
         a._ledger().top()["ache"] = 0.8
         a._sync_longing()
         before = a.longing
@@ -447,8 +507,7 @@ class TestEffectsFlagOn(unittest.TestCase):
 class TestRestartFidelityRealBackend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not PROVISIONED.is_dir():
-            raise unittest.SkipTest("NLTK data not provisioned")
+        require_nltk_backend()
 
     def setUp(self):
         nlp_data_env(self)
@@ -462,30 +521,45 @@ class TestRestartFidelityRealBackend(unittest.TestCase):
             store = Store(config.db_path())
             set_store(store)
             try:
-                with patch.object(Aethel, "forage_classic",
-                                  lambda self: canned("classic")), \
-                        patch.object(org_mod, "forage",
-                                     lambda rng=None: canned("wikipedia")), \
-                        patch.object(org_mod, "forage_news",
-                                     lambda rng=None: canned("newsroom")), \
-                        patch.object(org_mod, "forage_school",
-                                     lambda rng=None: canned("schoolhouse")), \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    a = Aethel(StubWorld(), parents=("Donald",),
-                               seed=42, language_backend="nltk")
+                with (
+                    patch.object(
+                        Aethel, "forage_classic", lambda self: canned("classic")
+                    ),
+                    patch.object(
+                        org_mod, "forage", lambda rng=None: canned("wikipedia")
+                    ),
+                    patch.object(
+                        org_mod, "forage_news", lambda rng=None: canned("newsroom")
+                    ),
+                    patch.object(
+                        org_mod, "forage_school", lambda rng=None: canned("schoolhouse")
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    a = Aethel(
+                        StubWorld(),
+                        parents=("Donald",),
+                        seed=42,
+                        language_backend="nltk",
+                    )
                     for _ in range(first):
                         a.tick()
                     if first:
                         store.close()
                         store = Store(config.db_path())
                         set_store(store)
-                        a = Aethel(StubWorld(), parents=("Donald",),
-                                   seed=42, language_backend="nltk")
+                        a = Aethel(
+                            StubWorld(),
+                            parents=("Donald",),
+                            seed=42,
+                            language_backend="nltk",
+                        )
                     for _ in range(total - first):
                         a.tick()
                 snap = {
-                    "journal": [(t, e, scrub(d))
-                                for t, e, d in store.recent(limit=10 ** 9)],
+                    "journal": [
+                        (t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)
+                    ],
                     "state": scrub(store.load_blob("state")),
                 }
                 store.close()
@@ -497,8 +571,7 @@ class TestRestartFidelityRealBackend(unittest.TestCase):
         """The seeded 260-tick gate, with tone active: interrupted
         equals uninterrupted, journal (tone events included) and
         state blob alike."""
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             interrupted = self._run(h1, first=130, total=260)
             uninterrupted = self._run(h2, first=0, total=260)
         events = [e for _, e, _ in interrupted["journal"]]

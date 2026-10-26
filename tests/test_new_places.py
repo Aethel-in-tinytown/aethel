@@ -25,6 +25,7 @@ Isolation: organisms are built against a temp AETHEL_HOME and an
 injected temp Store, the convention from test_longing_ledger — the
 live diary is never opened.
 """
+
 import os
 import tempfile
 import unittest
@@ -100,8 +101,7 @@ class TestResidentReachability(unittest.TestCase):
         town.save()
         town2 = Town(seed=77, store=store)
         self.assertEqual(town2.denizens[0].location, "restaurant")
-        self.assertEqual(town2.describe(town2.denizens[0].location),
-                         "the Restaurant")
+        self.assertEqual(town2.describe(town2.denizens[0].location), "the Restaurant")
 
 
 class NewPlaceLife(unittest.TestCase):
@@ -156,17 +156,31 @@ class TestAethelCanGo(NewPlaceLife):
 
     def test_pre_v030_save_gains_entries_additively(self):
         # a pre-v0.30 life: a ledger with one person entry, no new places
-        self.store.save_blob("state", {
-            "longing": 0.0,
-            "tick_count": 9000,
-            "vitals": {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                       "vitality": 0.8, "excitement": 0.0},
-            "longing_ledger": [{
-                "id": "person:Donald", "kind": "person",
-                "label": "Donald", "w": 0.85, "ache": 0.2,
-                "since": 12, "open": False,
-            }],
-        })
+        self.store.save_blob(
+            "state",
+            {
+                "longing": 0.0,
+                "tick_count": 9000,
+                "vitals": {
+                    "satiety": 0.8,
+                    "hydration": 0.8,
+                    "oxygen": 1.0,
+                    "vitality": 0.8,
+                    "excitement": 0.0,
+                },
+                "longing_ledger": [
+                    {
+                        "id": "person:Donald",
+                        "kind": "person",
+                        "label": "Donald",
+                        "w": 0.85,
+                        "ache": 0.2,
+                        "since": 12,
+                        "open": False,
+                    }
+                ],
+            },
+        )
         a = self.build()
         donald = a.longing_ledger.get("person:Donald")
         self.assertEqual(donald["ache"], 0.2)  # untouched by the migration

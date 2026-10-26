@@ -18,6 +18,7 @@ is the harness every current test file uses.) Notebook unit tests run
 on a fake WordNet so they need no NLTK data; organism integration
 tests use the real backend and skip when it is not provisioned.
 """
+
 import contextlib
 import io
 import os
@@ -25,11 +26,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import aethel_pkg.journal as journal_mod
 import aethel_pkg.organism as org_mod
 from aethel_pkg import config
 from aethel_pkg.config import STOPWORDS
-from aethel_pkg.journal import get_store, set_store
+from aethel_pkg.journal import set_store
 from aethel_pkg.language import Analysis, Token
 from aethel_pkg.notebook import KNOWN, HERS, PRESSED, Notebook, choose_synset
 from aethel_pkg.organism import Aethel
@@ -86,9 +86,7 @@ WORDNET = FakeWordNet(
             "n": [FakeSynset("record.n.01", "a documented account")],
             "v": [FakeSynset("record.v.01", "to register information")],
         },
-        "lantern": {
-            "n": [FakeSynset("lantern.n.01", "a portable lamp with a case")]
-        },
+        "lantern": {"n": [FakeSynset("lantern.n.01", "a portable lamp with a case")]},
         "swim": {"v": [FakeSynset("swim.v.01", "to propel the body in water")]},
     }
 )
@@ -206,8 +204,12 @@ class TestFeed(unittest.TestCase):
         sentences = ["Whale songs carry far."]
         analysis = make_analysis(
             sentences,
-            [("Whale", "whale", "NN"), ("songs", "song", "NNS"),
-             ("carry", "carry", "VB"), ("far", "far", "RB")],
+            [
+                ("Whale", "whale", "NN"),
+                ("songs", "song", "NNS"),
+                ("carry", "carry", "VB"),
+                ("far", "far", "RB"),
+            ],
         )
         nb = Notebook()
         nb.feed(analysis, "wikipedia", 7, WORDNET, is_content)
@@ -217,9 +219,13 @@ class TestFeed(unittest.TestCase):
         sentences = ["The whale and the door."]
         analysis = make_analysis(
             sentences,
-            [("The", "the", "DT"), ("whale", "whale", "NN"),
-             ("and", "and", "CC"), ("the", "the", "DT"),
-             ("door", "door", "NN")],
+            [
+                ("The", "the", "DT"),
+                ("whale", "whale", "NN"),
+                ("and", "and", "CC"),
+                ("the", "the", "DT"),
+                ("door", "door", "NN"),
+            ],
         )
         nb = Notebook()
         nb.feed(analysis, "classic", 1, WORDNET, is_content)
@@ -231,8 +237,11 @@ class TestFeed(unittest.TestCase):
         sentences = ["Whale, whale, whale."]
         analysis = make_analysis(
             sentences,
-            [("Whale", "whale", "NN"), ("whale", "whale", "NN"),
-             ("whale", "whale", "NN")],
+            [
+                ("Whale", "whale", "NN"),
+                ("whale", "whale", "NN"),
+                ("whale", "whale", "NN"),
+            ],
         )
         nb = Notebook()
         nb.feed(analysis, "classic", 1, WORDNET, is_content)
@@ -258,8 +267,7 @@ class TestGraduation(unittest.TestCase):
     def test_known_fires_exactly_on_third_distinct_source(self):
         def known_for(events, lemma="whale"):
             return [
-                n for n, e in events
-                if n == "notebook_known" and e["lemma"] == lemma
+                n for n, e in events if n == "notebook_known" and e["lemma"] == lemma
             ]
 
         nb = Notebook()
@@ -291,10 +299,7 @@ class TestGraduation(unittest.TestCase):
         events = self._feed_source(nb, "university", 3)
         self.assertEqual(nb.get("whale")["status"], HERS)
         self.assertFalse(
-            any(
-                n == "notebook_known" and e["lemma"] == "whale"
-                for n, e in events
-            )
+            any(n == "notebook_known" and e["lemma"] == "whale" for n, e in events)
         )
 
     def test_usable_words_hers_first_then_alphabetical(self):
@@ -307,8 +312,7 @@ class TestGraduation(unittest.TestCase):
         nb.mark_hers({"whale"})
         self.assertEqual(
             nb.usable_words(),
-            ["whale", "captain", "dawn", "door", "harbor", "lantern",
-             "surface"],
+            ["whale", "captain", "dawn", "door", "harbor", "lantern", "surface"],
         )
         self.assertEqual(
             nb.usable_words(statuses=(KNOWN,)),
@@ -348,8 +352,12 @@ class TestPersistence(unittest.TestCase):
 
     def test_malformed_rows_are_skipped_not_fatal(self):
         nb = Notebook.from_dict(
-            {"entries": {"whale": {"status": "bogus", "met_count": "x"},
-                         "door": {"status": "known", "met_count": 2}}}
+            {
+                "entries": {
+                    "whale": {"status": "bogus", "met_count": "x"},
+                    "door": {"status": "known", "met_count": 2},
+                }
+            }
         )
         self.assertNotIn("whale", nb)
         self.assertEqual(nb.get("door")["status"], KNOWN)
@@ -367,13 +375,10 @@ class FakeLang:
         import re as _re
 
         tokens, sentences = [], []
-        cursor = 0
         for m in _re.finditer(r"[^.!?]+[.!?]?", text):
             sentences.append((m.start(), m.end()))
         for m in _re.finditer(r"[A-Za-z]+", text):
-            tokens.append(
-                Token(m.group(), m.start(), m.end(), m.group().lower(), "NN")
-            )
+            tokens.append(Token(m.group(), m.start(), m.end(), m.group().lower(), "NN"))
         return Analysis(text, tuple(sentences), tuple(tokens))
 
     def content(self, token):
@@ -429,8 +434,9 @@ class TestOrganismSeamsFakeNlp(unittest.TestCase):
         a._notebook_mark_generated("The whale returned.", via="dream")
         self.assertEqual(a._notebook().get("whale")["status"], HERS)
         rows = self.store.recent(events=("notebook_hers",))
-        self.assertEqual([(d["lemma"], d["via"]) for _, _, d in rows],
-                         [("whale", "dream")])
+        self.assertEqual(
+            [(d["lemma"], d["via"]) for _, _, d in rows], [("whale", "dream")]
+        )
 
     def _whale_only_notebook(self):
         """A notebook whose only graduate is 'whale', so pool and
@@ -503,18 +509,23 @@ class TestHeuristicParity(unittest.TestCase):
             "source": "wikipedia",
             "title": "Fixture",
             "text": "The whale surfaced beyond the harbor at dawn. "
-                    "The captain kept a lantern by the door.",
+            "The captain kept a lantern by the door.",
         }
-        a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                   language_backend="heuristic")
+        a = Aethel(
+            StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+        )
         boom = AssertionError("notebook touched in heuristic mode")
-        with patch.object(Notebook, "feed", side_effect=boom), \
-                patch.object(Notebook, "mark_hers", side_effect=boom), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with patch.object(a, "forage_classic", return_value=meal), \
-                    patch.object(org_mod, "forage", return_value=meal), \
-                    patch.object(org_mod, "forage_news", return_value=meal), \
-                    patch.object(org_mod, "forage_school", return_value=meal):
+        with (
+            patch.object(Notebook, "feed", side_effect=boom),
+            patch.object(Notebook, "mark_hers", side_effect=boom),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            with (
+                patch.object(a, "forage_classic", return_value=meal),
+                patch.object(org_mod, "forage", return_value=meal),
+                patch.object(org_mod, "forage_news", return_value=meal),
+                patch.object(org_mod, "forage_school", return_value=meal),
+            ):
                 a.forage_and_eat()
             a.dream()
         a.save()
@@ -552,8 +563,9 @@ class TestNotebookIntegration(unittest.TestCase):
         self.addCleanup(self.store.close)
 
     def organism(self):
-        return Aethel(StubWorld(), parents=("Donald",), seed=42,
-                      language_backend="nltk")
+        return Aethel(
+            StubWorld(), parents=("Donald",), seed=42, language_backend="nltk"
+        )
 
     PASSAGE = (
         "The captain kept a brass lantern beside the chart table. "
@@ -597,11 +609,13 @@ class TestNotebookIntegration(unittest.TestCase):
                 via="dream",
             )
         self.assertEqual(a._notebook().get("whale")["status"], HERS)
-        kinds = {e for _, e, _ in self.store.recent(
-            events=("notebook_pressed", "notebook_known", "notebook_hers"))}
-        self.assertEqual(
-            kinds, {"notebook_pressed", "notebook_known", "notebook_hers"}
-        )
+        kinds = {
+            e
+            for _, e, _ in self.store.recent(
+                events=("notebook_pressed", "notebook_known", "notebook_hers")
+            )
+        }
+        self.assertEqual(kinds, {"notebook_pressed", "notebook_known", "notebook_hers"})
 
     def test_notebook_round_trip_through_simulated_restart(self):
         a = self.organism()
@@ -644,13 +658,15 @@ class TestNotebookIntegration(unittest.TestCase):
         }
 
         def canned(source):
-            return {"source": source, "title": f"Fixture {source}",
-                    "text": meals[source]}
+            return {
+                "source": source,
+                "title": f"Fixture {source}",
+                "text": meals[source],
+            }
 
         def scrub(obj):
             if isinstance(obj, dict):
-                return {k: scrub(v) for k, v in obj.items()
-                        if k not in ("t", "ts")}
+                return {k: scrub(v) for k, v in obj.items() if k not in ("t", "ts")}
             if isinstance(obj, list):
                 return [scrub(v) for v in obj]
             return obj
@@ -661,34 +677,50 @@ class TestNotebookIntegration(unittest.TestCase):
                 store = Store(config.db_path())
                 set_store(store)
                 try:
-                    with patch.object(
-                        Aethel, "forage_classic",
-                        lambda self: canned("classic"),
-                    ), patch.object(
-                        org_mod, "forage", lambda rng=None: canned("wikipedia")
-                    ), patch.object(
-                        org_mod, "forage_news",
-                        lambda rng=None: canned("newsroom"),
-                    ), patch.object(
-                        org_mod, "forage_school",
-                        lambda rng=None: canned("schoolhouse"),
-                    ), contextlib.redirect_stdout(io.StringIO()):
-                        a = Aethel(StubWorld(), parents=("Donald",),
-                                   seed=42, language_backend="nltk")
+                    with (
+                        patch.object(
+                            Aethel,
+                            "forage_classic",
+                            lambda self: canned("classic"),
+                        ),
+                        patch.object(
+                            org_mod, "forage", lambda rng=None: canned("wikipedia")
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_news",
+                            lambda rng=None: canned("newsroom"),
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_school",
+                            lambda rng=None: canned("schoolhouse"),
+                        ),
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        a = Aethel(
+                            StubWorld(),
+                            parents=("Donald",),
+                            seed=42,
+                            language_backend="nltk",
+                        )
                         for _ in range(first):
                             a.tick()
                         if first:
                             store.close()
                             store = Store(config.db_path())
                             set_store(store)
-                            a = Aethel(StubWorld(), parents=("Donald",),
-                                       seed=42, language_backend="nltk")
+                            a = Aethel(
+                                StubWorld(),
+                                parents=("Donald",),
+                                seed=42,
+                                language_backend="nltk",
+                            )
                         for _ in range(total - first):
                             a.tick()
                     snap = {
                         "journal": [
-                            (t, e, scrub(d))
-                            for t, e, d in store.recent(limit=10 ** 9)
+                            (t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)
                         ],
                         "state": scrub(store.load_blob("state")),
                     }
@@ -697,8 +729,7 @@ class TestNotebookIntegration(unittest.TestCase):
                 finally:
                     set_store(self.store)
 
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             interrupted = run(h1, first=130, total=260)
             uninterrupted = run(h2, first=0, total=260)
         # Sanity: the life actually used the notebook (words pressed,
@@ -706,9 +737,7 @@ class TestNotebookIntegration(unittest.TestCase):
         events = [e for _, e, _ in interrupted["journal"]]
         self.assertIn("notebook_pressed", events)
         self.assertIn("notebook", uninterrupted["state"])
-        self.assertGreater(
-            len(uninterrupted["state"]["notebook"]["entries"]), 3
-        )
+        self.assertGreater(len(uninterrupted["state"]["notebook"]["entries"]), 3)
         self.assertEqual(interrupted, uninterrupted)
 
     def test_synset_selection_deterministic_across_notebooks(self):

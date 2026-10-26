@@ -122,7 +122,7 @@ def _key_variants(name):
     variants = {key}
     for prefix in _LEADING_STRIP:
         if key.startswith(prefix):
-            variants.add(key[len(prefix):])
+            variants.add(key[len(prefix) :])
     variants.add("the " + key)
     return variants
 
@@ -131,8 +131,18 @@ def ordinal(n):
     """1 -> 'first', 2 -> 'second', ..., 12 -> 'twelfth', then
     numeric with the correct suffix (21st, 22nd, 23rd, 24th)."""
     words = [
-        "first", "second", "third", "fourth", "fifth", "sixth",
-        "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
+        "first",
+        "second",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "seventh",
+        "eighth",
+        "ninth",
+        "tenth",
+        "eleventh",
+        "twelfth",
     ]
     if 1 <= n <= len(words):
         return words[n - 1]
@@ -244,7 +254,7 @@ def extract_phrases(analysis, known_keys=(), wordnet=None):
                     continue
             phrases.append(
                 {
-                    "name": analysis.text[tok.start:tokens[j].end],
+                    "name": analysis.text[tok.start : tokens[j].end],
                     "start": tok.start,
                     "end": tokens[j].end,
                     "sentence_initial": bool(initial[i]),
@@ -263,7 +273,7 @@ def extract_phrases(analysis, known_keys=(), wordnet=None):
                 last = tokens[i + span - 1]
                 phrases.append(
                     {
-                        "name": analysis.text[tok.start:last.end],
+                        "name": analysis.text[tok.start : last.end],
                         "start": tok.start,
                         "end": last.end,
                         "sentence_initial": True,
@@ -460,6 +470,7 @@ class Gazetteer:
     def to_dict(self):
         """The whole registry as plain JSON-shaped data, keyed in
         sorted order for a stable serialized form."""
+
         def row(e):
             return {
                 "name": e["name"],

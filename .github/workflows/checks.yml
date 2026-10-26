@@ -4,6 +4,11 @@ jobs:
   python:
     runs-on: ubuntu-latest
     strategy:
+      # fail-fast off: one mode's failure must not cancel the other
+      # mid-run. With the default on, the heuristic jobs' fast
+      # failures cancelled the nltk jobs for four releases and the
+      # true failure set stayed invisible in the run summary.
+      fail-fast: false
       matrix:
         python: ['3.10', '3.12', '3.14']
         language: [heuristic, nltk]

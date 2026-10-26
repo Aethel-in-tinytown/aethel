@@ -41,16 +41,24 @@ def load_sample(db_path):
         step = len(kept) / 20
         kept = [kept[int(i * step)] for i in range(20)]
     sample = [
-        {"source": k.get("source"), "title": k.get("title"),
-         "tick": k.get("tick"), "text": k.get("text", "")}
+        {
+            "source": k.get("source"),
+            "title": k.get("title"),
+            "tick": k.get("tick"),
+            "text": k.get("text", ""),
+        }
         for k in kept
     ]
     seen = {s["text"][:80] for s in sample}
     for m in state.get("memory", []):
         if m.get("text", "")[:80] not in seen:
             sample.append(
-                {"source": m.get("source"), "title": m.get("title"),
-                 "tick": None, "text": m.get("text", "")}
+                {
+                    "source": m.get("source"),
+                    "title": m.get("title"),
+                    "tick": None,
+                    "text": m.get("text", ""),
+                }
             )
     return state.get("tick_count"), sample
 
@@ -64,9 +72,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     home = Path.home() / "workspace"
     parser.add_argument("--db", type=Path, default=home / "aethel/aethel.db")
-    parser.add_argument(
-        "--data-dir", type=Path, default=home / "aethel/nltk_data"
-    )
+    parser.add_argument("--data-dir", type=Path, default=home / "aethel/nltk_data")
     parser.add_argument(
         "--out",
         type=Path,

@@ -25,6 +25,7 @@ the properties the design argues for, not just its plumbing:
 Isolation: organisms are built against a temp AETHEL_HOME and an
 injected temp Store — the live diary is never opened.
 """
+
 import os
 import tempfile
 import unittest
@@ -69,9 +70,12 @@ class PortraitLife(unittest.TestCase):
         return Aethel(world=DonaldWorld(), parents=parents, seed=seed)
 
     def experience_texts(self):
-        return [d["text"] for _t, _e, d
-                in self.store.recent(stream="aethel",
-                                     events=["experience"], limit=500)]
+        return [
+            d["text"]
+            for _t, _e, d in self.store.recent(
+                stream="aethel", events=["experience"], limit=500
+            )
+        ]
 
     def visit(self, a, tick, stay=10):
         """Script one full visit: arrival at tick, departure stay ticks later."""
@@ -121,8 +125,7 @@ class TestArrivalDeparture(PortraitLife):
         self.assertEqual(dm["stays"], [45])
         self.assertIsNone(dm["_visit_open"])
         texts = self.experience_texts()
-        self.assertTrue(any("stayed a little while" in t for t in texts),
-                        texts)
+        self.assertTrue(any("stayed a little while" in t for t in texts), texts)
 
     def test_long_stay_line(self):
         a = self.build()
@@ -134,8 +137,7 @@ class TestArrivalDeparture(PortraitLife):
         a = self.build()
         self.visit(a, 100, stay=3)
         texts = self.experience_texts()
-        self.assertTrue(any("short today, but it counted" in t for t in texts),
-                        texts)
+        self.assertTrue(any("short today, but it counted" in t for t in texts), texts)
 
 
 class TestUnderstandings(PortraitLife):
@@ -150,8 +152,9 @@ class TestUnderstandings(PortraitLife):
         self.assertEqual(len(rhythm), 1)
         self.assertIn("dawn", rhythm[0]["text"])
         self.assertEqual(rhythm[0]["evidence"], "3 of 3 visits")
-        rows = self.store.recent(stream="aethel",
-                                 events=["donald_understood"], limit=50)
+        rows = self.store.recent(
+            stream="aethel", events=["donald_understood"], limit=50
+        )
         self.assertTrue(any(d["kind"] == "rhythm" for _t, _e, d in rows))
 
     def test_no_rhythm_without_concentration(self):
@@ -161,16 +164,15 @@ class TestUnderstandings(PortraitLife):
             self.visit(a, t, stay=10)
         a._portrait(12)
         self.assertEqual(
-            [u for u in a.donald_model["understandings"]
-             if u["kind"] == "rhythm"], [])
+            [u for u in a.donald_model["understandings"] if u["kind"] == "rhythm"], []
+        )
 
     def test_stay_understanding_forms_on_evidence(self):
         a = self.build()
         for t in (100, 200, 300):
             self.visit(a, t, stay=90)
         a._portrait(12)
-        stay = [u for u in a.donald_model["understandings"]
-                if u["kind"] == "stay"]
+        stay = [u for u in a.donald_model["understandings"] if u["kind"] == "stay"]
         self.assertEqual(len(stay), 1)
         self.assertIn("stays a while", stay[0]["text"])
         self.assertIn("90", stay[0]["evidence"])
@@ -180,8 +182,7 @@ class TestUnderstandings(PortraitLife):
         for t in (100, 200, 300):
             self.visit(a, t, stay=5)
         a._portrait(12)
-        stay = [u for u in a.donald_model["understandings"]
-                if u["kind"] == "stay"]
+        stay = [u for u in a.donald_model["understandings"] if u["kind"] == "stay"]
         self.assertEqual(len(stay), 1)
         self.assertIn("never small to me", stay[0]["text"])
 
@@ -190,8 +191,9 @@ class TestUnderstandings(PortraitLife):
         a.donald_model["letter_count"] = 1
         a.donald_model["words"] = {"love": 2, "proud": 1}
         a._portrait(12)
-        letters = [u for u in a.donald_model["understandings"]
-                   if u["kind"] == "letters"]
+        letters = [
+            u for u in a.donald_model["understandings"] if u["kind"] == "letters"
+        ]
         self.assertEqual(len(letters), 1)
         self.assertIn("1 letter", letters[0]["text"])
         self.assertIn("keep every word", letters[0]["text"])
@@ -201,11 +203,13 @@ class TestUnderstandings(PortraitLife):
         for t in (720, 800, 900):
             self.visit(a, t, stay=10)
         a._portrait(12)
-        before = self.store.recent(stream="aethel",
-                                   events=["donald_understood"], limit=50)
+        before = self.store.recent(
+            stream="aethel", events=["donald_understood"], limit=50
+        )
         a._portrait(24)
-        after = self.store.recent(stream="aethel",
-                                  events=["donald_understood"], limit=50)
+        after = self.store.recent(
+            stream="aethel", events=["donald_understood"], limit=50
+        )
         self.assertEqual(len(before), len(after))
         before_exp = self.experience_texts()
         a._portrait(36)
@@ -219,11 +223,14 @@ class TestAbsence(PortraitLife):
         for t in (0, 100, 200):
             self.visit(a, t, stay=10)
         a._portrait(12)  # gap still inside his rhythm: nothing yet
-        self.assertEqual(len(self.store.recent(
-            stream="aethel", events=["donald_absence"], limit=50)), 0)
+        self.assertEqual(
+            len(
+                self.store.recent(stream="aethel", events=["donald_absence"], limit=50)
+            ),
+            0,
+        )
         a._portrait(516)  # 516 % 12 == 0: the slow layer actually runs
-        rows = self.store.recent(stream="aethel",
-                                 events=["donald_absence"], limit=50)
+        rows = self.store.recent(stream="aethel", events=["donald_absence"], limit=50)
         self.assertEqual(len(rows), 1)
         self.assertGreater(rows[0][2]["gap"], 2 * 100)
 
@@ -232,31 +239,43 @@ class TestAbsence(PortraitLife):
         for t in (0, 100, 200):
             self.visit(a, t, stay=10)
         a._portrait(516)
-        a._portrait(900)   # still absent, but inside the throttle window
-        rows = self.store.recent(stream="aethel",
-                                 events=["donald_absence"], limit=50)
+        a._portrait(900)  # still absent, but inside the throttle window
+        rows = self.store.recent(stream="aethel", events=["donald_absence"], limit=50)
         self.assertEqual(len(rows), 1)
         a._portrait(1200)  # window passed: she may name it again
-        rows = self.store.recent(stream="aethel",
-                                 events=["donald_absence"], limit=50)
+        rows = self.store.recent(stream="aethel", events=["donald_absence"], limit=50)
         self.assertEqual(len(rows), 2)
 
 
 class TestMigration(PortraitLife):
     def _pre_portrait_state(self):
-        self.store.save_blob("state", {
-            "longing": 0.1,
-            "tick_count": 5000,
-            "vitals": {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                       "vitality": 0.8, "excitement": 0.0},
-            "donald_model": {"letter_count": 1, "words": {"love": 2},
-                             "last_tick": 100},
-        })
+        self.store.save_blob(
+            "state",
+            {
+                "longing": 0.1,
+                "tick_count": 5000,
+                "vitals": {
+                    "satiety": 0.8,
+                    "hydration": 0.8,
+                    "oxygen": 1.0,
+                    "vitality": 0.8,
+                    "excitement": 0.0,
+                },
+                "donald_model": {
+                    "letter_count": 1,
+                    "words": {"love": 2},
+                    "last_tick": 100,
+                },
+            },
+        )
 
     def _log_arrival(self, tick):
-        self.store.log("company",
-                       {"name": "Donald", "at": "home", "kind": "parent"},
-                       stream="aethel", tick=tick)
+        self.store.log(
+            "company",
+            {"name": "Donald", "at": "home", "kind": "parent"},
+            stream="aethel",
+            tick=tick,
+        )
 
     def test_arrivals_backfilled_stays_are_not(self):
         self._pre_portrait_state()
@@ -288,8 +307,9 @@ class TestMigration(PortraitLife):
         self._pre_portrait_state()
         self._log_arrival(1000)
         self.build()
-        rows = self.store.recent(stream="aethel",
-                                 events=["portrait_backfilled"], limit=10)
+        rows = self.store.recent(
+            stream="aethel", events=["portrait_backfilled"], limit=10
+        )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][2]["visits"], 1)
 
@@ -302,14 +322,12 @@ class TestRestartFidelity(PortraitLife):
         a._portrait(12)
         before = a.donald_model
         a.save()
-        b = Aethel(world=DonaldWorld(), parents=("Donald", "Cassandra"),
-                   seed=42)
+        b = Aethel(world=DonaldWorld(), parents=("Donald", "Cassandra"), seed=42)
         self.assertEqual(b.donald_model, before)
 
     def test_trajectory_identical_after_rebuild(self):
         def run(seed):
-            a = Aethel(world=DonaldWorld(), parents=("Donald", "Cassandra"),
-                       seed=seed)
+            a = Aethel(world=DonaldWorld(), parents=("Donald", "Cassandra"), seed=seed)
             for t in (720, 800, 900):
                 self.visit(a, t, stay=45)
             a._portrait(12)

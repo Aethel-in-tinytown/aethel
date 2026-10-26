@@ -17,6 +17,7 @@ against. Unit tests run on a fake WordNet/language so they need no
 NLTK data; golden tests use the real backend and skip when it is
 not provisioned.
 """
+
 import contextlib
 import io
 import os
@@ -102,22 +103,36 @@ def _syn(name, gloss, pos, sims=None):
 
 WORDNET = FakeWordNet(
     {
-        "create": [_syn("make.v.03", "make or cause to be", "v",
-                        {"abandon.v.01": 0.2, "judge.v.01": 0.1})],
-        "make": [_syn("make.v.03", "make or cause to be", "v",
-                      {"abandon.v.01": 0.2})],
-        "care": [_syn("care.v.01", "feel concern or interest", "v",
-                      {"abandon.v.01": 0.15})],
-        "abandon": [_syn("abandon.v.01", "forsake, leave behind", "v",
-                         {"make.v.03": 0.2, "care.v.01": 0.15})],
-        "creature": [_syn("creature.n.01", "a living organism", "n",
-                          {"abandonment.n.01": 0.25})],
-        "abandonment": [_syn("abandonment.n.01", "the act of giving up", "n",
-                             {"creature.n.01": 0.25})],
-        "judge": [_syn("judge.v.01", "form an opinion", "v",
-                       {"mislead.v.01": 0.3})],
-        "mislead": [_syn("mislead.v.01", "lead astray", "v",
-                         {"judge.v.01": 0.3})],
+        "create": [
+            _syn(
+                "make.v.03",
+                "make or cause to be",
+                "v",
+                {"abandon.v.01": 0.2, "judge.v.01": 0.1},
+            )
+        ],
+        "make": [_syn("make.v.03", "make or cause to be", "v", {"abandon.v.01": 0.2})],
+        "care": [
+            _syn("care.v.01", "feel concern or interest", "v", {"abandon.v.01": 0.15})
+        ],
+        "abandon": [
+            _syn(
+                "abandon.v.01",
+                "forsake, leave behind",
+                "v",
+                {"make.v.03": 0.2, "care.v.01": 0.15},
+            )
+        ],
+        "creature": [
+            _syn("creature.n.01", "a living organism", "n", {"abandonment.n.01": 0.25})
+        ],
+        "abandonment": [
+            _syn(
+                "abandonment.n.01", "the act of giving up", "n", {"creature.n.01": 0.25}
+            )
+        ],
+        "judge": [_syn("judge.v.01", "form an opinion", "v", {"mislead.v.01": 0.3})],
+        "mislead": [_syn("mislead.v.01", "lead astray", "v", {"judge.v.01": 0.3})],
         "hasty": [_syn("hasty.a.01", "done with haste", "s")],
         "judgment": [_syn("judgment.n.01", "an opinion formed", "n")],
     }
@@ -144,9 +159,14 @@ class FakeLang:
 
     # A few surfaces whose lemmas differ, so golden-shaped queries
     # exercise lemma normalization on the fake too.
-    LEMMAS = {"making": "make", "creating": "create", "judged": "judge",
-              "misled": "mislead", "carelessly": "carelessly",
-              "caring": "care"}
+    LEMMAS = {
+        "making": "make",
+        "creating": "create",
+        "judged": "judge",
+        "misled": "mislead",
+        "carelessly": "carelessly",
+        "caring": "care",
+    }
 
     def __init__(self, name="nltk"):
         self.name = name
@@ -160,8 +180,13 @@ class FakeLang:
         for m in _re.finditer(r"[A-Za-z]+", text):
             surface = m.group()
             tokens.append(
-                Token(surface, m.start(), m.end(),
-                      self.LEMMAS.get(surface.lower(), surface.lower()), "NN")
+                Token(
+                    surface,
+                    m.start(),
+                    m.end(),
+                    self.LEMMAS.get(surface.lower(), surface.lower()),
+                    "NN",
+                )
             )
         return Analysis(text, tuple(sentences), tuple(tokens))
 
@@ -207,18 +232,15 @@ class TestScoreUnit(unittest.TestCase):
         self.assertIn("care", shared)
         self.assertIsNotNone(why["best_path"])
         self.assertEqual(why["best_path"]["query_lemma"], "creature")
-        self.assertEqual(why["best_path"]["candidate_synset"],
-                         "abandonment.n.01")
+        self.assertEqual(why["best_path"]["candidate_synset"], "abandonment.n.01")
         self.assertTrue(why["best_path"]["query_gloss"])
         self.assertTrue(why["best_path"]["candidate_gloss"])
         self.assertIn("lemma_score", why)
         self.assertIn("wordnet_score", why)
 
     def test_determinism_identical_results_including_why(self):
-        first = self.engine.recall(FRANK_QUERY, self.cands, k=4,
-                                   stats=self.stats)
-        second = self.engine.recall(FRANK_QUERY, self.cands, k=4,
-                                    stats=self.stats)
+        first = self.engine.recall(FRANK_QUERY, self.cands, k=4, stats=self.stats)
+        second = self.engine.recall(FRANK_QUERY, self.cands, k=4, stats=self.stats)
         self.assertEqual(
             [(r.candidate_id, r.score, r.raw_score, r.why) for r in first],
             [(r.candidate_id, r.score, r.raw_score, r.why) for r in second],
@@ -229,8 +251,7 @@ class TestScoreUnit(unittest.TestCase):
         # stored texts; the ranking and payloads must not move.
         rebuilt = SemanticRecall(FakeLang())
         stats2 = rebuilt.corpus_stats(list(BELIEFS))
-        before = self.engine.recall(PRIDE_QUERY, self.cands, k=4,
-                                    stats=self.stats)
+        before = self.engine.recall(PRIDE_QUERY, self.cands, k=4, stats=self.stats)
         after = rebuilt.recall(PRIDE_QUERY, self.cands, k=4, stats=stats2)
         self.assertEqual(
             [(r.candidate_id, r.score, r.why) for r in before],
@@ -241,8 +262,9 @@ class TestScoreUnit(unittest.TestCase):
         text = "create and care"
         twins = [("zzzzzzzzzzzz", text), ("aaaaaaaaaaaa", text)]
         out = self.engine.recall("create care", twins, k=2)
-        self.assertEqual([r.candidate_id for r in out],
-                         ["aaaaaaaaaaaa", "zzzzzzzzzzzz"])
+        self.assertEqual(
+            [r.candidate_id for r in out], ["aaaaaaaaaaaa", "zzzzzzzzzzzz"]
+        )
         self.assertEqual(out[0].score, out[1].score)
 
     def test_diversity_penalty_deprioritizes_recent_winner(self):
@@ -252,7 +274,10 @@ class TestScoreUnit(unittest.TestCase):
         plain = self.engine.recall(FRANK_QUERY, cands, k=2, stats=self.stats)
         self.assertEqual(plain[0].candidate_id, "aaaaaaaaaaaa")
         capped = self.engine.recall(
-            FRANK_QUERY, cands, k=2, stats=self.stats,
+            FRANK_QUERY,
+            cands,
+            k=2,
+            stats=self.stats,
             recent_ids=["aaaaaaaaaaaa"],
         )
         self.assertEqual(capped[0].candidate_id, "bbbbbbbbbbbb")
@@ -278,8 +303,14 @@ class TestOrganismSeam(unittest.TestCase):
         rows = self.store.recent(events=("recall",))
         self.assertEqual(len(rows), 1)
         _, _, d = rows[0]
-        for field in ("query_kind", "query", "candidate_id", "candidate",
-                      "score", "why"):
+        for field in (
+            "query_kind",
+            "query",
+            "candidate_id",
+            "candidate",
+            "score",
+            "why",
+        ):
             self.assertIn(field, d)
         self.assertEqual(d["query_kind"], "reading")
         self.assertEqual(d["candidate_id"], candidate_id(BELIEF_FRANK))
@@ -307,12 +338,13 @@ class TestOrganismSeam(unittest.TestCase):
     def test_heuristic_bare_organism_never_recalls(self):
         a = make_bare(language=FakeLang(name="heuristic"))
         boom = AssertionError("recall touched in heuristic mode")
-        with patch.object(SemanticRecall, "recall", side_effect=boom), \
-                patch.object(SemanticRecall, "score", side_effect=boom):
+        with (
+            patch.object(SemanticRecall, "recall", side_effect=boom),
+            patch.object(SemanticRecall, "score", side_effect=boom),
+        ):
             self.assertIsNone(a._recall_top(FRANK_QUERY, "reading"))
             self.assertIsNone(
-                a._recall_top(FRANK_QUERY, "morning_table",
-                              candidates=list(BELIEFS))
+                a._recall_top(FRANK_QUERY, "morning_table", candidates=list(BELIEFS))
             )
         self.assertEqual(self.store.recent(events=("recall",)), [])
 
@@ -335,19 +367,24 @@ class TestHeuristicParity(unittest.TestCase):
             "source": "wikipedia",
             "title": "Fixture",
             "text": "To create without care for what you create is "
-                    "abandonment. The captain kept a lantern by the door.",
+            "abandonment. The captain kept a lantern by the door.",
         }
-        a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                   language_backend="heuristic")
+        a = Aethel(
+            StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+        )
         a.beliefs = list(BELIEFS)
         boom = AssertionError("recall touched in heuristic mode")
-        with patch.object(SemanticRecall, "recall", side_effect=boom), \
-                patch.object(SemanticRecall, "score", side_effect=boom), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with patch.object(a, "forage_classic", return_value=meal), \
-                    patch.object(org_mod, "forage", return_value=meal), \
-                    patch.object(org_mod, "forage_news", return_value=meal), \
-                    patch.object(org_mod, "forage_school", return_value=meal):
+        with (
+            patch.object(SemanticRecall, "recall", side_effect=boom),
+            patch.object(SemanticRecall, "score", side_effect=boom),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            with (
+                patch.object(a, "forage_classic", return_value=meal),
+                patch.object(org_mod, "forage", return_value=meal),
+                patch.object(org_mod, "forage_news", return_value=meal),
+                patch.object(org_mod, "forage_school", return_value=meal),
+            ):
                 a.forage_and_eat()
             a.dream()
         a.save()
@@ -380,8 +417,7 @@ class TestGoldenRelevance(unittest.TestCase):
         self.cands = [(candidate_id(b), b) for b in BELIEFS]
 
     def test_careless_creation_ranks_frankenstein_first(self):
-        out = self.engine.recall(FRANK_QUERY, self.cands, k=4,
-                                 stats=self.stats)
+        out = self.engine.recall(FRANK_QUERY, self.cands, k=4, stats=self.stats)
         self.assertEqual(out[0].text, BELIEF_FRANK)
         self.assertGreater(out[0].score, out[1].score)
         shared = [s["lemma"] for s in out[0].why["shared_lemmas"]]
@@ -389,8 +425,7 @@ class TestGoldenRelevance(unittest.TestCase):
         self.assertIn("care", shared)
 
     def test_hasty_judgment_ranks_pride_first(self):
-        out = self.engine.recall(PRIDE_QUERY, self.cands, k=4,
-                                 stats=self.stats)
+        out = self.engine.recall(PRIDE_QUERY, self.cands, k=4, stats=self.stats)
         self.assertEqual(out[0].text, BELIEF_PRIDE)
         self.assertGreater(out[0].score, out[1].score)
 
@@ -398,15 +433,15 @@ class TestGoldenRelevance(unittest.TestCase):
         from aethel_pkg.recall import READING_THRESHOLD
 
         out = self.engine.recall(
-            "the harbor was quiet and the lantern burned all night "
-            "over still water",
-            self.cands, k=1, stats=self.stats,
+            "the harbor was quiet and the lantern burned all night over still water",
+            self.cands,
+            k=1,
+            stats=self.stats,
         )
         self.assertLess(out[0].score, READING_THRESHOLD)
 
     def test_real_backend_determinism_and_restart_stability(self):
-        before = self.engine.recall(FRANK_QUERY, self.cands, k=4,
-                                    stats=self.stats)
+        before = self.engine.recall(FRANK_QUERY, self.cands, k=4, stats=self.stats)
         rebuilt = SemanticRecall(self.backend)
         stats2 = rebuilt.corpus_stats(list(BELIEFS))
         after = rebuilt.recall(FRANK_QUERY, self.cands, k=4, stats=stats2)

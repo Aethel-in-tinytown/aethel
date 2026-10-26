@@ -21,6 +21,7 @@ Isolation: in-memory stores via set_store and a temp AETHEL_HOME for
 every organism built here — her live diary is never instantiated
 against.
 """
+
 import contextlib
 import io
 import os
@@ -34,6 +35,7 @@ from aethel_pkg.entities import (
     Gazetteer,
     belief_link,
     extract_phrases,
+    normalize,
     ordinal,
     seed_entries,
 )
@@ -106,20 +108,32 @@ def austen_fake(happiness_pos="NN"):
         "Happiness was entirely a matter of chance.",
     ]
     specs = [
-        ("Elizabeth", "elizabeth", "NNP"), ("Bennet", "bennet", "NNP"),
-        ("had", "have", "VBD"), ("been", "be", "VBN"),
-        ("obliged", "oblige", "VBN"), ("to", "to", "TO"),
-        ("sit", "sit", "VB"), ("down", "down", "RP"),
-        ("for", "for", "IN"), ("two", "two", "CD"),
+        ("Elizabeth", "elizabeth", "NNP"),
+        ("Bennet", "bennet", "NNP"),
+        ("had", "have", "VBD"),
+        ("been", "be", "VBN"),
+        ("obliged", "oblige", "VBN"),
+        ("to", "to", "TO"),
+        ("sit", "sit", "VB"),
+        ("down", "down", "RP"),
+        ("for", "for", "IN"),
+        ("two", "two", "CD"),
         ("dances", "dance", "NNS"),
-        ("Mr.", "mr.", "NNP"), ("Darcy", "darcy", "NNP"),
-        ("danced", "dance", "VBD"), ("only", "only", "RB"),
-        ("once", "once", "RB"), ("more", "more", "RBR"),
-        ("with", "with", "IN"), ("her", "her", "PRP"),
+        ("Mr.", "mr.", "NNP"),
+        ("Darcy", "darcy", "NNP"),
+        ("danced", "dance", "VBD"),
+        ("only", "only", "RB"),
+        ("once", "once", "RB"),
+        ("more", "more", "RBR"),
+        ("with", "with", "IN"),
+        ("her", "her", "PRP"),
         ("Happiness", "happiness", happiness_pos),
-        ("was", "be", "VBD"), ("entirely", "entirely", "RB"),
-        ("a", "a", "DT"), ("matter", "matter", "NN"),
-        ("of", "of", "IN"), ("chance", "chance", "NN"),
+        ("was", "be", "VBD"),
+        ("entirely", "entirely", "RB"),
+        ("a", "a", "DT"),
+        ("matter", "matter", "NN"),
+        ("of", "of", "IN"),
+        ("chance", "chance", "NN"),
     ]
     return make_analysis(sentences, specs)
 
@@ -137,8 +151,7 @@ class FakeLang:
     def analyze(self, text):
         import re as _re
 
-        sentences = [(m.start(), m.end())
-                     for m in _re.finditer(r"[^.!?]+[.!?]?", text)]
+        sentences = [(m.start(), m.end()) for m in _re.finditer(r"[^.!?]+[.!?]?", text)]
         tokens = tuple(
             Token(m.group(), m.start(), m.end(), m.group().lower(), "NN")
             for m in _re.finditer(r"[A-Za-z]+", text)
@@ -171,8 +184,13 @@ def make_bare(language=None, seed=42):
     a.reading_list = []
     a.moral_log = []
     a.longing = 0.0
-    a.vitals = {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                 "vitality": 0.8, "excitement": 0.0}
+    a.vitals = {
+        "satiety": 0.8,
+        "hydration": 0.8,
+        "oxygen": 1.0,
+        "vitality": 0.8,
+        "excitement": 0.0,
+    }
     a.language = language if language is not None else FakeLang()
     return a
 
@@ -189,7 +207,7 @@ class TestExtraction(unittest.TestCase):
         names = [p["name"] for p in phrases]
         self.assertEqual(names, ["Elizabeth Bennet", "Mr. Darcy"])
         for p in phrases:
-            self.assertEqual(analysis.text[p["start"]:p["end"]], p["name"])
+            self.assertEqual(analysis.text[p["start"] : p["end"]], p["name"])
         self.assertTrue(phrases[0]["sentence_initial"])
 
     def test_sentence_initial_common_noun_tagged_nn_not_promoted(self):
@@ -205,25 +223,27 @@ class TestExtraction(unittest.TestCase):
     def test_sentence_initial_nn_gazetteer_match_rescued(self):
         sentences = ["Dickens wrote of London for years."]
         specs = [
-            ("Dickens", "dickens", "NN"), ("wrote", "write", "VBD"),
-            ("of", "of", "IN"), ("London", "london", "NNP"),
-            ("for", "for", "IN"), ("years", "year", "NNS"),
+            ("Dickens", "dickens", "NN"),
+            ("wrote", "write", "VBD"),
+            ("of", "of", "IN"),
+            ("London", "london", "NNP"),
+            ("for", "for", "IN"),
+            ("years", "year", "NNS"),
         ]
-        phrases = extract_phrases(
-            make_analysis(sentences, specs), self.known, FAKE_WN
-        )
+        phrases = extract_phrases(make_analysis(sentences, specs), self.known, FAKE_WN)
         self.assertEqual([p["name"] for p in phrases], ["Dickens", "London"])
 
     def test_initial_proper_name_with_capitalized_lemma_accepted(self):
         sentences = ["Marley was dead, to begin with."]
         specs = [
-            ("Marley", "marley", "NNP"), ("was", "be", "VBD"),
-            ("dead", "dead", "JJ"), ("to", "to", "TO"),
-            ("begin", "begin", "VB"), ("with", "with", "IN"),
+            ("Marley", "marley", "NNP"),
+            ("was", "be", "VBD"),
+            ("dead", "dead", "JJ"),
+            ("to", "to", "TO"),
+            ("begin", "begin", "VB"),
+            ("with", "with", "IN"),
         ]
-        phrases = extract_phrases(
-            make_analysis(sentences, specs), self.known, FAKE_WN
-        )
+        phrases = extract_phrases(make_analysis(sentences, specs), self.known, FAKE_WN)
         self.assertEqual([p["name"] for p in phrases], ["Marley"])
 
     def test_corroboration_rescues_common_spelled_name(self):
@@ -234,16 +254,19 @@ class TestExtraction(unittest.TestCase):
             "And Scrooge's name was good upon the Exchange.",
         ]
         specs = [
-            ("Scrooge", "scrooge", "NNP"), ("signed", "sign", "VBD"),
+            ("Scrooge", "scrooge", "NNP"),
+            ("signed", "sign", "VBD"),
             ("it", "it", "PRP"),
-            ("And", "and", "CC"), ("Scrooge", "scrooge", "NNP"),
-            ("name", "name", "NN"), ("was", "be", "VBD"),
-            ("good", "good", "JJ"), ("upon", "upon", "IN"),
-            ("the", "the", "DT"), ("Exchange", "exchange", "NNP"),
+            ("And", "and", "CC"),
+            ("Scrooge", "scrooge", "NNP"),
+            ("name", "name", "NN"),
+            ("was", "be", "VBD"),
+            ("good", "good", "JJ"),
+            ("upon", "upon", "IN"),
+            ("the", "the", "DT"),
+            ("Exchange", "exchange", "NNP"),
         ]
-        phrases = extract_phrases(
-            make_analysis(sentences, specs), self.known, FAKE_WN
-        )
+        phrases = extract_phrases(make_analysis(sentences, specs), self.known, FAKE_WN)
         self.assertEqual(
             [p["name"] for p in phrases], ["Scrooge", "Scrooge", "Exchange"]
         )
@@ -254,14 +277,15 @@ class TestExtraction(unittest.TestCase):
         # christen an entity named '""'.
         sentences = ['He said "" and left for London.']
         specs = [
-            ("He", "he", "PRP"), ("said", "say", "VBD"),
-            ('""', '""', "NNP"), ("and", "and", "CC"),
-            ("left", "leave", "VBD"), ("for", "for", "IN"),
+            ("He", "he", "PRP"),
+            ("said", "say", "VBD"),
+            ('""', '""', "NNP"),
+            ("and", "and", "CC"),
+            ("left", "leave", "VBD"),
+            ("for", "for", "IN"),
             ("London", "london", "NNP"),
         ]
-        phrases = extract_phrases(
-            make_analysis(sentences, specs), self.known, FAKE_WN
-        )
+        phrases = extract_phrases(make_analysis(sentences, specs), self.known, FAKE_WN)
         self.assertEqual([p["name"] for p in phrases], ["London"])
 
     def test_ordinal_words_and_suffixes(self):
@@ -281,28 +305,47 @@ class TestSeed(unittest.TestCase):
         by_kind = {}
         for r in rows:
             by_kind.setdefault(r["kind"], []).append(r["name"])
-        # Census moves with the classics shelf by design: authors are
-        # seeded from CLASSIC_SEEDS, so the v0.40 restock (8 books)
-        # added its three new-to-the-shelf authors (Carroll,
-        # Dostoevsky, Hesse) — 33 rows / 13 authors before, 36 / 16
-        # after. A future restock updates this census again, on
-        # purpose, here.
-        self.assertEqual(len(rows), 36)
+        # The cast stays pinned on purpose: a denizen joining or
+        # leaving is a canon decision, and this test is where it must
+        # be acknowledged, not absorbed.
         self.assertEqual(
             sorted(by_kind["person"]),
             ["Cassandra", "Donald", "John", "Julius", "Octavia", "Star", "Trey"],
         )
-        self.assertEqual(len(by_kind["place"]), 13)
         self.assertIn("the Library", by_kind["place"])
-        self.assertEqual(len(by_kind["author"]), 16)
-        for author in (
-            "Charles Dickens",
-            "Jane Austen",
-            "Leo Tolstoy",
-            "Lewis Carroll",
-            "Fyodor Dostoevsky",
-            "Hermann Hesse",
-        ):
+        # Places and authors are DERIVED from their sources of truth
+        # (town_pkg.places.PLACES, config.CLASSIC_SEEDS), replaying
+        # the seed's own rule: first occurrence wins on the
+        # normalized key, across kinds, in seed order. Both
+        # registries grow by design, and a pinned census broke on
+        # exactly that growth twice in spirit (33 rows before the
+        # v0.40 classics restock, 36 after, the count re-pinned by
+        # hand each time) with nothing actually wrong. A derived
+        # expectation cannot drift from the registries it checks.
+        from town_pkg.places import PLACES
+
+        seen = {normalize(name) for name in by_kind["person"]}
+
+        def replay(names):
+            out = []
+            for name in names:
+                key = normalize(name)
+                if key and key not in seen:
+                    seen.add(key)
+                    out.append(name)
+            return out
+
+        expected_places = replay(list(PLACES.values()))
+        expected_authors = replay(
+            [book["author"] for book in config.CLASSIC_SEEDS if book.get("author")]
+        )
+        self.assertEqual(by_kind["place"], expected_places)
+        self.assertEqual(by_kind["author"], expected_authors)
+        self.assertEqual(
+            len(rows),
+            len(by_kind["person"]) + len(expected_places) + len(expected_authors),
+        )
+        for author in ("Charles Dickens", "Jane Austen", "Leo Tolstoy"):
             self.assertIn(author, by_kind["author"])
         self.assertTrue(all(r["origin"] == "world" for r in rows))
 
@@ -326,8 +369,11 @@ class TestSeed(unittest.TestCase):
 def heathcliff_analysis():
     sentences = ["Heathcliff glowered at the moor."]
     specs = [
-        ("Heathcliff", "heathcliff", "NNP"), ("glowered", "glower", "VBD"),
-        ("at", "at", "IN"), ("the", "the", "DT"), ("moor", "moor", "NN"),
+        ("Heathcliff", "heathcliff", "NNP"),
+        ("glowered", "glower", "VBD"),
+        ("at", "at", "IN"),
+        ("the", "the", "DT"),
+        ("moor", "moor", "NN"),
     ]
     return make_analysis(sentences, specs)
 
@@ -368,10 +414,14 @@ class TestGrowth(unittest.TestCase):
 def dickens_analysis():
     sentences = ["Dickens wrote of London, and London answered him."]
     specs = [
-        ("Dickens", "dickens", "NNP"), ("wrote", "write", "VBD"),
-        ("of", "of", "IN"), ("London", "london", "NNP"),
-        ("and", "and", "CC"), ("London", "london", "NNP"),
-        ("answered", "answer", "VBD"), ("him", "him", "PRP"),
+        ("Dickens", "dickens", "NNP"),
+        ("wrote", "write", "VBD"),
+        ("of", "of", "IN"),
+        ("London", "london", "NNP"),
+        ("and", "and", "CC"),
+        ("London", "london", "NNP"),
+        ("answered", "answer", "VBD"),
+        ("him", "him", "PRP"),
     ]
     return make_analysis(sentences, specs)
 
@@ -393,8 +443,7 @@ class TestOrganismSeam(unittest.TestCase):
         counts = [d["counts"] for _, _, d in reversed(rows)]
         self.assertEqual(
             counts,
-            [{"Charles Dickens": 1}, {"Charles Dickens": 2},
-             {"Charles Dickens": 3}],
+            [{"Charles Dickens": 1}, {"Charles Dickens": 2}, {"Charles Dickens": 3}],
         )
         for _, _, d in rows:
             self.assertEqual(d["entities"], ["Charles Dickens"])
@@ -402,9 +451,7 @@ class TestOrganismSeam(unittest.TestCase):
         # London was tracked as an unknown sighting each time, never
         # silently met: it is not in the gazetteer yet.
         seen = self.store.recent(events=("entity_seen",), limit=10)
-        self.assertEqual(
-            {d["entity"] for _, _, d in seen}, {"London"}
-        )
+        self.assertEqual({d["entity"] for _, _, d in seen}, {"London"})
         out = buf.getvalue()
         self.assertIn("Charles Dickens again", out)
         self.assertIn("second time", out)
@@ -432,7 +479,9 @@ class TestOrganismSeam(unittest.TestCase):
 
     def test_belief_link_uses_phase2_id_scheme(self):
         a = make_bare()
-        belief = "From A Tale of Two Cities: sacrifice freely given can redeem a wasted life"
+        belief = (
+            "From A Tale of Two Cities: sacrifice freely given can redeem a wasted life"
+        )
         payload = a._link_belief_entities(
             belief, author="Charles Dickens", scan_text=belief
         )
@@ -458,8 +507,9 @@ class TestOrganismSeam(unittest.TestCase):
         }
         with contextlib.redirect_stdout(io.StringIO()):
             a.finish_book(cur)
-        belief = ("From A Tale of Two Cities: sacrifice freely given "
-                  "can redeem a wasted life")
+        belief = (
+            "From A Tale of Two Cities: sacrifice freely given can redeem a wasted life"
+        )
         self.assertIn(belief, a.beliefs)
         rows = self.store.recent(events=("belief_entity",), limit=10)
         self.assertEqual(len(rows), 1)
@@ -470,15 +520,15 @@ class TestOrganismSeam(unittest.TestCase):
     def test_heuristic_bare_organism_never_touches_entities(self):
         a = make_bare(language=FakeLang(name="heuristic"))
         boom = AssertionError("entities touched in heuristic mode")
-        with patch.object(Gazetteer, "feed", side_effect=boom), \
-                patch("aethel_pkg.organism._entities.extract_phrases",
-                      side_effect=boom):
+        with (
+            patch.object(Gazetteer, "feed", side_effect=boom),
+            patch("aethel_pkg.organism._entities.extract_phrases", side_effect=boom),
+        ):
             self.assertIsNone(a._entities_feed(dickens_analysis(), "classic"))
             self.assertIsNone(
                 a._link_belief_entities("From X: y", author="Charles Dickens")
             )
-        for event in ("entity_met", "entity_seen", "entity_learned",
-                      "belief_entity"):
+        for event in ("entity_met", "entity_seen", "entity_learned", "belief_entity"):
             self.assertEqual(self.store.recent(events=(event,)), [])
 
 
@@ -500,25 +550,28 @@ class TestHeuristicParity(unittest.TestCase):
             "source": "classic",
             "title": "A Tale of Two Cities — Charles Dickens",
             "text": "Dickens wrote of London, and London answered him. "
-                    "It was the best of times.",
+            "It was the best of times.",
         }
-        a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                   language_backend="heuristic")
+        a = Aethel(
+            StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+        )
         boom = AssertionError("entities touched in heuristic mode")
-        with patch.object(Gazetteer, "feed", side_effect=boom), \
-                patch("aethel_pkg.organism._entities.extract_phrases",
-                      side_effect=boom), \
-                patch.object(Gazetteer, "seeded", side_effect=boom), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with patch.object(a, "forage_classic", return_value=meal), \
-                    patch.object(org_mod, "forage", return_value=meal), \
-                    patch.object(org_mod, "forage_news", return_value=meal), \
-                    patch.object(org_mod, "forage_school", return_value=meal):
+        with (
+            patch.object(Gazetteer, "feed", side_effect=boom),
+            patch("aethel_pkg.organism._entities.extract_phrases", side_effect=boom),
+            patch.object(Gazetteer, "seeded", side_effect=boom),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            with (
+                patch.object(a, "forage_classic", return_value=meal),
+                patch.object(org_mod, "forage", return_value=meal),
+                patch.object(org_mod, "forage_news", return_value=meal),
+                patch.object(org_mod, "forage_school", return_value=meal),
+            ):
                 a.forage_and_eat()
             a.dream()
         a.save()
-        for event in ("entity_met", "entity_seen", "entity_learned",
-                      "belief_entity"):
+        for event in ("entity_met", "entity_seen", "entity_learned", "belief_entity"):
             self.assertEqual(self.store.recent(events=(event,)), [])
         self.assertNotIn("gazetteer", self.store.load_blob("state"))
 
@@ -561,19 +614,22 @@ class TestPrecisionRealBackend(unittest.TestCase):
     def test_austen_precision(self):
         gaz = Gazetteer.seeded()
         analysis = self.backend.analyze(AUSTEN_PASSAGE)
-        names = [p["name"] for p in extract_phrases(
-            analysis, gaz.match_keys(), self.backend.wordnet)]
+        names = [
+            p["name"]
+            for p in extract_phrases(analysis, gaz.match_keys(), self.backend.wordnet)
+        ]
         for expected in ("Elizabeth Bennet", "Mr. Darcy", "Elizabeth"):
             self.assertIn(expected, names)
-        for invented in ("Happiness", "Chance", "Truth", "Wife",
-                         "Fortune", "Dances"):
+        for invented in ("Happiness", "Chance", "Truth", "Wife", "Fortune", "Dances"):
             self.assertNotIn(invented, names)
 
     def test_dickens_precision(self):
         gaz = Gazetteer.seeded()
         analysis = self.backend.analyze(DICKENS_PASSAGE)
-        names = [p["name"] for p in extract_phrases(
-            analysis, gaz.match_keys(), self.backend.wordnet)]
+        names = [
+            p["name"]
+            for p in extract_phrases(analysis, gaz.match_keys(), self.backend.wordnet)
+        ]
         for expected in ("Marley", "Scrooge", "Charles Dickens", "London"):
             self.assertIn(expected, names)
         for invented in ("Fog", "River", "Meadows", "Doubt", "Hand"):
@@ -646,13 +702,15 @@ class TestRestartFidelityRealBackend(unittest.TestCase):
         }
 
         def canned(source):
-            return {"source": source, "title": f"Fixture {source}",
-                    "text": meals[source]}
+            return {
+                "source": source,
+                "title": f"Fixture {source}",
+                "text": meals[source],
+            }
 
         def scrub(obj):
             if isinstance(obj, dict):
-                return {k: scrub(v) for k, v in obj.items()
-                        if k not in ("t", "ts")}
+                return {k: scrub(v) for k, v in obj.items() if k not in ("t", "ts")}
             if isinstance(obj, list):
                 return [scrub(v) for v in obj]
             return obj
@@ -663,34 +721,50 @@ class TestRestartFidelityRealBackend(unittest.TestCase):
                 store = Store(config.db_path())
                 set_store(store)
                 try:
-                    with patch.object(
-                        Aethel, "forage_classic",
-                        lambda self: canned("classic"),
-                    ), patch.object(
-                        org_mod, "forage", lambda rng=None: canned("wikipedia")
-                    ), patch.object(
-                        org_mod, "forage_news",
-                        lambda rng=None: canned("newsroom"),
-                    ), patch.object(
-                        org_mod, "forage_school",
-                        lambda rng=None: canned("schoolhouse"),
-                    ), contextlib.redirect_stdout(io.StringIO()):
-                        a = Aethel(StubWorld(), parents=("Donald",),
-                                   seed=42, language_backend="nltk")
+                    with (
+                        patch.object(
+                            Aethel,
+                            "forage_classic",
+                            lambda self: canned("classic"),
+                        ),
+                        patch.object(
+                            org_mod, "forage", lambda rng=None: canned("wikipedia")
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_news",
+                            lambda rng=None: canned("newsroom"),
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_school",
+                            lambda rng=None: canned("schoolhouse"),
+                        ),
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        a = Aethel(
+                            StubWorld(),
+                            parents=("Donald",),
+                            seed=42,
+                            language_backend="nltk",
+                        )
                         for _ in range(first):
                             a.tick()
                         if first:
                             store.close()
                             store = Store(config.db_path())
                             set_store(store)
-                            a = Aethel(StubWorld(), parents=("Donald",),
-                                       seed=42, language_backend="nltk")
+                            a = Aethel(
+                                StubWorld(),
+                                parents=("Donald",),
+                                seed=42,
+                                language_backend="nltk",
+                            )
                         for _ in range(total - first):
                             a.tick()
                     snap = {
                         "journal": [
-                            (t, e, scrub(d))
-                            for t, e, d in store.recent(limit=10 ** 9)
+                            (t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)
                         ],
                         "state": scrub(store.load_blob("state")),
                     }
@@ -699,16 +773,17 @@ class TestRestartFidelityRealBackend(unittest.TestCase):
                 finally:
                     set_store(self.store)
 
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             interrupted = run(h1, first=130, total=260)
             uninterrupted = run(h2, first=0, total=260)
         events = [e for _, e, _ in interrupted["journal"]]
         self.assertIn("entity_met", events)
         self.assertIn("gazetteer", uninterrupted["state"])
         self.assertGreater(
-            uninterrupted["state"]["gazetteer"]["entries"]["charles dickens"]
-            ["met_count"], 0,
+            uninterrupted["state"]["gazetteer"]["entries"]["charles dickens"][
+                "met_count"
+            ],
+            0,
         )
         self.assertEqual(interrupted, uninterrupted)
 

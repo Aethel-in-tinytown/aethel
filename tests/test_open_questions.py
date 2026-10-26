@@ -18,6 +18,7 @@ business look twice its true size. Tests:
 7. a saved life full of duplicates is consolidated on rebuild, and
    the consolidated list survives a save/load round trip unchanged.
 """
+
 import os
 import tempfile
 import unittest
@@ -36,7 +37,9 @@ PEN = "When I write 'I', who is holding the pen?"
 CHEST = "Why does dreamed make my chest feel the way it does?"
 NEWSROOM_OLD = "What does the the Newsroom look like when I'm asleep?"
 NEWSROOM_NEW = "What does the Newsroom look like when I'm asleep?"
-COTTAGE_OLD = "What does the the little cottage at the edge of town look like when I'm asleep?"
+COTTAGE_OLD = (
+    "What does the the little cottage at the edge of town look like when I'm asleep?"
+)
 NOBODY = "Is dreamed still true when nobody is reading it?"
 
 
@@ -52,17 +55,52 @@ def _prep():
 def _live_shape():
     """Her real list at tick 22,552, copied from the live state blob."""
     return [
-        {"text": LEARNED, "keywords": ["learned", "everything"], "tick": 7513, "touches": 1},
+        {
+            "text": LEARNED,
+            "keywords": ["learned", "everything"],
+            "tick": 7513,
+            "touches": 1,
+        },
         {"text": PEN, "keywords": ["holding"], "tick": 7513, "touches": 0},
-        {"text": LEARNED, "keywords": ["learned", "everything"], "tick": 7606, "touches": 0},
+        {
+            "text": LEARNED,
+            "keywords": ["learned", "everything"],
+            "tick": 7606,
+            "touches": 0,
+        },
         {"text": PEN, "keywords": ["holding"], "tick": 7606, "touches": 0},
         {"text": CHEST, "keywords": ["dreamed", "chest"], "tick": 7699, "touches": 2},
-        {"text": NEWSROOM_OLD, "keywords": ["newsroom", "asleep"], "tick": 7795, "touches": 0},
+        {
+            "text": NEWSROOM_OLD,
+            "keywords": ["newsroom", "asleep"],
+            "tick": 7795,
+            "touches": 0,
+        },
         {"text": PEN, "keywords": ["holding"], "tick": 7888, "touches": 0},
-        {"text": LEARNED, "keywords": ["learned", "everything"], "tick": 7888, "touches": 0},
-        {"text": COTTAGE_OLD, "keywords": ["cottage", "asleep"], "tick": 7999, "touches": 3},
-        {"text": LEARNED, "keywords": ["learned", "everything"], "tick": 7999, "touches": 0},
-        {"text": NOBODY, "keywords": ["dreamed", "nobody", "reading"], "tick": 8087, "touches": 2},
+        {
+            "text": LEARNED,
+            "keywords": ["learned", "everything"],
+            "tick": 7888,
+            "touches": 0,
+        },
+        {
+            "text": COTTAGE_OLD,
+            "keywords": ["cottage", "asleep"],
+            "tick": 7999,
+            "touches": 3,
+        },
+        {
+            "text": LEARNED,
+            "keywords": ["learned", "everything"],
+            "tick": 7999,
+            "touches": 0,
+        },
+        {
+            "text": NOBODY,
+            "keywords": ["dreamed", "nobody", "reading"],
+            "tick": 8087,
+            "touches": 2,
+        },
         {"text": CHEST, "keywords": ["dreamed", "chest"], "tick": 8087, "touches": 0},
     ]
 
@@ -70,7 +108,9 @@ def _live_shape():
 class TestQuestionKey(unittest.TestCase):
     def test_key_folds_surface_variation(self):
         k = Aethel._question_key
-        self.assertEqual(k(LEARNED), k("  if i learned   everything, would i still be me"))
+        self.assertEqual(
+            k(LEARNED), k("  if i learned   everything, would i still be me")
+        )
         self.assertEqual(k(NEWSROOM_OLD), k(NEWSROOM_NEW))
 
     def test_key_keeps_distinct_questions_distinct(self):
@@ -121,10 +161,10 @@ class TestConsolidation(unittest.TestCase):
         self.assertEqual(removed, 6)
         self.assertEqual(len(a.open_questions), 6)
         by_text = {q["text"]: q for q in a.open_questions}
-        self.assertEqual(by_text[LEARNED]["tick"], 7513)   # earliest stands
-        self.assertEqual(by_text[LEARNED]["touches"], 1)   # 1+0+0+0
+        self.assertEqual(by_text[LEARNED]["tick"], 7513)  # earliest stands
+        self.assertEqual(by_text[LEARNED]["touches"], 1)  # 1+0+0+0
         self.assertEqual(by_text[PEN]["touches"], 0)
-        self.assertEqual(by_text[CHEST]["touches"], 2)     # 2+0
+        self.assertEqual(by_text[CHEST]["touches"], 2)  # 2+0
         self.assertEqual(by_text[COTTAGE_OLD]["touches"], 3)
         self.assertEqual(by_text[NOBODY]["touches"], 2)
         rows = get_store().recent(events=["questions_merged"])

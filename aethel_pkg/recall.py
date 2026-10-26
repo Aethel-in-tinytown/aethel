@@ -234,18 +234,10 @@ class SemanticRecall:
     def _wordnet_term(self, qmap, cmap, stats):
         """(score, best_path) — mean of per-query-lemma best path
         similarities, over the bounded, category-matched pair set."""
-        q_lemmas = sorted(qmap, key=lambda l: (-stats.weight(l), l))[
-            :WN_LEMMA_CAP
-        ]
-        c_lemmas = sorted(cmap, key=lambda l: (-stats.weight(l), l))[
-            :WN_LEMMA_CAP
-        ]
-        q_syn = {
-            l: select_synset(self.wordnet, l, qmap[l]) for l in q_lemmas
-        }
-        c_syn = {
-            l: select_synset(self.wordnet, l, cmap[l]) for l in c_lemmas
-        }
+        q_lemmas = sorted(qmap, key=lambda l: (-stats.weight(l), l))[:WN_LEMMA_CAP]
+        c_lemmas = sorted(cmap, key=lambda l: (-stats.weight(l), l))[:WN_LEMMA_CAP]
+        q_syn = {l: select_synset(self.wordnet, l, qmap[l]) for l in q_lemmas}
+        c_syn = {l: select_synset(self.wordnet, l, cmap[l]) for l in c_lemmas}
         best_total = 0.0
         counted = 0
         best_path = None
@@ -312,7 +304,9 @@ class SemanticRecall:
                 strength = count / (count + ASSOC_SATURATION)
                 if strength > best_strength:
                     best_lemma, best_count, best_strength = (
-                        cl, count, strength,
+                        cl,
+                        count,
+                        strength,
                     )
             total += best_strength
             if best_lemma is not None:
@@ -325,8 +319,7 @@ class SemanticRecall:
                     }
                 )
         evidence.sort(
-            key=lambda e: (-e["strength"], e["query_lemma"],
-                           e["candidate_lemma"])
+            key=lambda e: (-e["strength"], e["query_lemma"], e["candidate_lemma"])
         )
         return total / len(qmap), evidence
 
@@ -351,9 +344,7 @@ class SemanticRecall:
         union = set(qmap) | set(cmap)
         union_weight = sum(stats.weight(l) for l in union)
         lemma_score = (
-            sum(stats.weight(l) for l in shared) / union_weight
-            if union_weight
-            else 0.0
+            sum(stats.weight(l) for l in shared) / union_weight if union_weight else 0.0
         )
         wordnet_score, best_path = self._wordnet_term(qmap, cmap, stats)
         base = LEMMA_WEIGHT * lemma_score + WORDNET_WEIGHT * wordnet_score
@@ -361,8 +352,7 @@ class SemanticRecall:
         total = base + ASSOC_WEIGHT * assoc_score * (1.0 - base)
         why = {
             "shared_lemmas": [
-                {"lemma": l, "weight": round(stats.weight(l), 6)}
-                for l in shared[:5]
+                {"lemma": l, "weight": round(stats.weight(l), 6)} for l in shared[:5]
             ],
             "best_path": best_path,
             "lemma_score": round(lemma_score, 6),
@@ -373,8 +363,7 @@ class SemanticRecall:
         return total, why
 
     # -- ranking ---------------------------------------------------------
-    def recall(self, query_text, candidates, k=1, stats=None,
-               recent_ids=(), cooc=None):
+    def recall(self, query_text, candidates, k=1, stats=None, recent_ids=(), cooc=None):
         """Top-k (candidate, score, why) for a query.
 
         `candidates` is an iterable of (candidate_id, text) pairs.
@@ -397,9 +386,7 @@ class SemanticRecall:
             adjusted = raw * (1.0 - DIVERSITY_PENALTY) if penalized else raw
             why = dict(why)
             why["diversity_penalized"] = penalized
-            results.append(
-                RecallResult(cid, text, adjusted, raw, why)
-            )
+            results.append(RecallResult(cid, text, adjusted, raw, why))
         results.sort(key=lambda r: (-r.score, r.candidate_id))
         return results[:k]
 
@@ -418,16 +405,13 @@ def why_summary(why):
             "best path: {query_lemma} ~ {candidate_lemma} via "
             "{query_synset} / {candidate_synset} ({similarity})".format(**path)
         )
-    parts.append(
-        "lemma {lemma_score}, wordnet {wordnet_score}".format(**why)
-    )
+    parts.append("lemma {lemma_score}, wordnet {wordnet_score}".format(**why))
     associations = why.get("associations") or []
     if associations:
         parts.append(
             "her associations: "
             + ", ".join(
-                "{query_lemma}~{candidate_lemma}".format(**a)
-                for a in associations
+                "{query_lemma}~{candidate_lemma}".format(**a) for a in associations
             )
             + f" (assoc {why.get('assoc_score')})"
         )

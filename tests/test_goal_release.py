@@ -12,6 +12,7 @@ Release is deliberately narrow: grown <= 0 AND progress == 0 AND
 age >= GOAL_RELEASE_AGE_TICKS (two days). Anything the world still
 speaks to, even once, is protected at any age.
 """
+
 import unittest
 
 import aethel_pkg.organism as org
@@ -30,8 +31,12 @@ class TestGoalRelease(unittest.TestCase):
         self.a.goals = []
         self.a.released_terms = {}
         self.a.completed_terms = set()
-        self.a.vitals = {"satiety": 0.8, "hydration": 0.8,
-                         "oxygen": 1.0, "vitality": 0.8}
+        self.a.vitals = {
+            "satiety": 0.8,
+            "hydration": 0.8,
+            "oxygen": 1.0,
+            "vitality": 0.8,
+        }
         self.a.lemma_index = {}
         self.events = []
         self._orig_journal = org.journal
@@ -42,9 +47,13 @@ class TestGoalRelease(unittest.TestCase):
         org.journal = self._orig_journal
 
     def _goal(self, term, start, adopted, progress=0.0):
-        return {"question": f"what is {term}?", "term": term,
-                "start_count": start, "progress": progress,
-                "adopted_tick": adopted}
+        return {
+            "question": f"what is {term}?",
+            "term": term,
+            "start_count": start,
+            "progress": progress,
+            "adopted_tick": adopted,
+        }
 
     def test_fossil_goal_is_released(self):
         # the live shape: word absent from her concepts entirely,
@@ -98,9 +107,11 @@ class TestGoalRelease(unittest.TestCase):
         a = self.a
         a.tick_count = 24485
         a.concepts = {"course": 1741, "time": 1059, "look": 432}
-        a.goals = [self._goal("pruszcz", 0, 0),
-                   self._goal("wonderhop", 0, 0),
-                   self._goal("dorian", 395, 6700, progress=0.1)]
+        a.goals = [
+            self._goal("pruszcz", 0, 0),
+            self._goal("wonderhop", 0, 0),
+            self._goal("dorian", 395, 6700, progress=0.1),
+        ]
         a.concepts["dorian"] = 396
         a.update_goals()
         self.assertEqual([g["term"] for g in a.goals], ["dorian"])
@@ -140,6 +151,7 @@ class TestGoalRelease(unittest.TestCase):
         from aethel_pkg.journal import set_store
         from aethel_pkg.store import Store
         from town_pkg.town import Town
+
         set_store(Store(":memory:"))
         town = Town()
         a = Aethel(world=town, parents=set(), seed=42)

@@ -19,6 +19,7 @@ and day 7 of her life got no page, no era, no portrait. Tests:
    text admits it was written late;
 10. the v0.40 classics restock is on the shelf, behind the old books.
 """
+
 import unittest
 
 from aethel_pkg import config
@@ -125,8 +126,7 @@ def _loaded_prep(recorded_days, last_day_seen):
     a = _prep()
     a._loaded_state = True
     a.days = [
-        {"day": d, "ticks": ((d - 1) * DL, d * DL), "text": f"day {d}",
-         "facts": {}}
+        {"day": d, "ticks": ((d - 1) * DL, d * DL), "text": f"day {d}", "facts": {}}
         for d in recorded_days
     ]
     a._last_day_seen = last_day_seen
@@ -235,7 +235,7 @@ class TestRestock(unittest.TestCase):
         for t in self.NEW_TITLES:
             self.assertIn(t, titles)
         # the old shelf keeps its order; the new books queue behind it
-        self.assertEqual(titles[-len(self.NEW_TITLES):], self.NEW_TITLES)
+        self.assertEqual(titles[-len(self.NEW_TITLES) :], self.NEW_TITLES)
         self.assertEqual(
             titles[:3],
             ["The Death of Ivan Ilych", "Pride and Prejudice", "Frankenstein"],

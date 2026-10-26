@@ -22,6 +22,7 @@ every organism built here — her live diary is never instantiated
 against. Unit tests run on a fake WordNet/language; golden and
 fidelity tests use the real backend and skip when unprovisioned.
 """
+
 import contextlib
 import io
 import os
@@ -46,8 +47,7 @@ from helpers import StubWorld
 PROVISIONED = Path.home() / "workspace" / "aethel" / "nltk_data"
 
 CARE_TEXT = (
-    "protect the mother and child from harm and nurture the family "
-    "with care and trust"
+    "protect the mother and child from harm and nurture the family with care and trust"
 )
 POWER_TEXT = (
     "power and advantage grow when rulers control strategy with "
@@ -60,8 +60,7 @@ FATE_TEXT = (
 # The precedent the care deliberation must cite: it shares five
 # content lemmas with CARE_TEXT.
 PRECEDENT_BELIEF = (
-    "care for the child and protect the family; nurture kin, "
-    "never abandon"
+    "care for the child and protect the family; nurture kin, never abandon"
 )
 OTHER_BELIEF = "the harbor lantern burned over still water all night"
 
@@ -146,19 +145,51 @@ FAKE_WN_TABLE = {
 
 class FakeWordNet:
     _lexnames = [
-        "adj.all", "adj.pert", "adj.ppl", "adv.all", "noun.Tops",
-        "noun.act", "noun.animal", "noun.artifact", "noun.attribute",
-        "noun.body", "noun.cognition", "noun.communication",
-        "noun.event", "noun.feeling", "noun.food", "noun.group",
-        "noun.location", "noun.motive", "noun.object", "noun.person",
-        "noun.phenomenon", "noun.plant", "noun.possession",
-        "noun.process", "noun.quantity", "noun.relation", "noun.shape",
-        "noun.state", "noun.substance", "noun.time", "verb.body",
-        "verb.change", "verb.cognition", "verb.communication",
-        "verb.competition", "verb.consumption", "verb.contact",
-        "verb.creation", "verb.emotion", "verb.motion",
-        "verb.perception", "verb.possession", "verb.social",
-        "verb.stative", "verb.weather",
+        "adj.all",
+        "adj.pert",
+        "adj.ppl",
+        "adv.all",
+        "noun.Tops",
+        "noun.act",
+        "noun.animal",
+        "noun.artifact",
+        "noun.attribute",
+        "noun.body",
+        "noun.cognition",
+        "noun.communication",
+        "noun.event",
+        "noun.feeling",
+        "noun.food",
+        "noun.group",
+        "noun.location",
+        "noun.motive",
+        "noun.object",
+        "noun.person",
+        "noun.phenomenon",
+        "noun.plant",
+        "noun.possession",
+        "noun.process",
+        "noun.quantity",
+        "noun.relation",
+        "noun.shape",
+        "noun.state",
+        "noun.substance",
+        "noun.time",
+        "verb.body",
+        "verb.change",
+        "verb.cognition",
+        "verb.communication",
+        "verb.competition",
+        "verb.consumption",
+        "verb.contact",
+        "verb.creation",
+        "verb.emotion",
+        "verb.motion",
+        "verb.perception",
+        "verb.possession",
+        "verb.social",
+        "verb.stative",
+        "verb.weather",
     ]
 
     def synsets(self, lemma, pos=None):
@@ -182,9 +213,13 @@ class FakeLang:
         for m in _re.finditer(r"[A-Za-z]+", text):
             surface = m.group()
             tokens.append(
-                Token(surface, m.start(), m.end(),
-                      self.LEMMAS.get(surface.lower(), surface.lower()),
-                      "NN")
+                Token(
+                    surface,
+                    m.start(),
+                    m.end(),
+                    self.LEMMAS.get(surface.lower(), surface.lower()),
+                    "NN",
+                )
             )
         return Analysis(text, ((0, len(text)),), tuple(tokens))
 
@@ -259,9 +294,7 @@ class TestLensData(unittest.TestCase):
             for lexname in lens["lexnames"]:
                 self.assertIn(lexname, known, f"{voice} {lexname}")
             for seed in lens["seeds"]:
-                self.assertTrue(
-                    backend.wordnet.synsets(seed), f"{voice} seed {seed}"
-                )
+                self.assertTrue(backend.wordnet.synsets(seed), f"{voice} seed {seed}")
 
 
 # ------------------------------------------------------- lens scores
@@ -326,11 +359,14 @@ class TestMindComposition(unittest.TestCase):
         action = "care nurture trust harm"
         base, _ = self.llm.moral_score(action, self.phils)
         care_w = {"Ethics of Care (Gilligan)": 2.0}
-        factors = {"Ethics of Care (Gilligan)": 1.25,
-                   "Utilitarianism (Mill)": 1.0,
-                   "Gandhian (Gandhi)": 1.0}
+        factors = {
+            "Ethics of Care (Gilligan)": 1.25,
+            "Utilitarianism (Mill)": 1.0,
+            "Gandhian (Gandhi)": 1.0,
+        }
         got, _ = self.llm.moral_score(
-            action, self.phils, weights=care_w, lens_factors=factors)
+            action, self.phils, weights=care_w, lens_factors=factors
+        )
         # voters: Care 0.61 (vp3 vn1), Util 0.25 (vn harm), Gandhi 0.25
         expect = (0.61 * 2.0 * 1.25 + 0.25 + 0.25) / (2.0 * 1.25 + 1.0 + 1.0)
         self.assertAlmostEqual(got, expect, places=12)
@@ -340,9 +376,11 @@ class TestMindComposition(unittest.TestCase):
         action = "care nurture trust harm"
         plain, notes = self.llm.moral_score(action, self.phils)
         with_lens, notes2 = self.llm.moral_score(
-            action, self.phils,
+            action,
+            self.phils,
             lens_factors={"Platonism (Plato)": 1.25},
-            lens_citations={"Platonism (Plato)": "lens form (+25%)"})
+            lens_citations={"Platonism (Plato)": "lens form (+25%)"},
+        )
         self.assertAlmostEqual(with_lens, plain, places=12)
         self.assertEqual(notes, notes2)  # Plato abstained: no citation
 
@@ -350,8 +388,9 @@ class TestMindComposition(unittest.TestCase):
         action = "care nurture trust harm"
         self.assertEqual(
             self.llm.moral_score(action, self.phils),
-            self.llm.moral_score(action, self.phils, weights=None,
-                                 lens_factors=None, lens_citations=None),
+            self.llm.moral_score(
+                action, self.phils, weights=None, lens_factors=None, lens_citations=None
+            ),
         )
 
 
@@ -387,14 +426,17 @@ class TestGoldenDeliberations(unittest.TestCase):
         self.assertEqual(len(self.store.recent(events=("recall",))), 1)
 
     def test_golden_deliberation_real_backend(self):
-        backend = real_backend(self)
+        real_backend(self)  # gate + env patch; the organism builds its own
         home = tempfile.TemporaryDirectory()
         self.addCleanup(home.cleanup)
-        with patch.dict(os.environ, {"AETHEL_HOME": home.name}), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            patch.dict(os.environ, {"AETHEL_HOME": home.name}),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             config.ensure_dirs()
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="nltk")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="nltk"
+            )
             a.beliefs = [PRECEDENT_BELIEF, OTHER_BELIEF]
             score, notes = a._council_score(CARE_TEXT)
             score2, notes2 = a._council_score(CARE_TEXT)
@@ -456,13 +498,16 @@ class TestHeuristicParity(unittest.TestCase):
 
     def test_heuristic_council_never_touches_lenses_or_recall(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            a = Aethel(StubWorld(), parents=("Donald",), seed=42,
-                       language_backend="heuristic")
+            a = Aethel(
+                StubWorld(), parents=("Donald",), seed=42, language_backend="heuristic"
+            )
         a.beliefs = [PRECEDENT_BELIEF]
         boom = AssertionError("Phase 5 machinery touched in heuristic mode")
-        with patch.object(lenses, "lens_scores", side_effect=boom), \
-                patch.object(SemanticRecall, "recall", side_effect=boom), \
-                patch.object(SemanticRecall, "score", side_effect=boom):
+        with (
+            patch.object(lenses, "lens_scores", side_effect=boom),
+            patch.object(SemanticRecall, "recall", side_effect=boom),
+            patch.object(SemanticRecall, "score", side_effect=boom),
+        ):
             for action in (CARE_TEXT, POWER_TEXT, FATE_TEXT, TIE_TEXT):
                 self.assertEqual(
                     a._council_score(action),
@@ -501,8 +546,7 @@ MEALS = {
 
 
 def canned(source):
-    return {"source": source, "title": f"Fixture {source}",
-            "text": MEALS[source]}
+    return {"source": source, "title": f"Fixture {source}", "text": MEALS[source]}
 
 
 def scrub(obj):
@@ -516,8 +560,18 @@ def scrub(obj):
 class TestRestartFidelityPhase5(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not PROVISIONED.is_dir():
-            raise unittest.SkipTest("NLTK data not provisioned")
+        # Probe the backend itself, not just the data path (the
+        # real_backend() pattern above): a provisioned tree beside a
+        # missing nltk package must skip, not error, and CI's nltk
+        # jobs, which provision at the resolved AETHEL_NLTK_DATA
+        # root rather than any home directory, must actually run.
+        from aethel_pkg.language import NltkLanguage
+        from aethel_pkg.language_resources import LanguageError
+
+        try:
+            NltkLanguage()
+        except LanguageError as exc:
+            raise unittest.SkipTest(f"Optional NLTK integration: {exc}")
 
     def setUp(self):
         nlp_data_env(self)
@@ -531,30 +585,45 @@ class TestRestartFidelityPhase5(unittest.TestCase):
             store = Store(config.db_path())
             set_store(store)
             try:
-                with patch.object(Aethel, "forage_classic",
-                                  lambda self: canned("classic")), \
-                        patch.object(org_mod, "forage",
-                                     lambda rng=None: canned("wikipedia")), \
-                        patch.object(org_mod, "forage_news",
-                                     lambda rng=None: canned("newsroom")), \
-                        patch.object(org_mod, "forage_school",
-                                     lambda rng=None: canned("schoolhouse")), \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    a = Aethel(StubWorld(), parents=("Donald",),
-                               seed=42, language_backend="nltk")
+                with (
+                    patch.object(
+                        Aethel, "forage_classic", lambda self: canned("classic")
+                    ),
+                    patch.object(
+                        org_mod, "forage", lambda rng=None: canned("wikipedia")
+                    ),
+                    patch.object(
+                        org_mod, "forage_news", lambda rng=None: canned("newsroom")
+                    ),
+                    patch.object(
+                        org_mod, "forage_school", lambda rng=None: canned("schoolhouse")
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    a = Aethel(
+                        StubWorld(),
+                        parents=("Donald",),
+                        seed=42,
+                        language_backend="nltk",
+                    )
                     for _ in range(first):
                         a.tick()
                     if first:
                         store.close()
                         store = Store(config.db_path())
                         set_store(store)
-                        a = Aethel(StubWorld(), parents=("Donald",),
-                                   seed=42, language_backend="nltk")
+                        a = Aethel(
+                            StubWorld(),
+                            parents=("Donald",),
+                            seed=42,
+                            language_backend="nltk",
+                        )
                     for _ in range(total - first):
                         a.tick()
                 snap = {
-                    "journal": [(t, e, scrub(d))
-                                for t, e, d in store.recent(limit=10 ** 9)],
+                    "journal": [
+                        (t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)
+                    ],
                     "state": scrub(store.load_blob("state")),
                 }
                 store.close()
@@ -563,8 +632,7 @@ class TestRestartFidelityPhase5(unittest.TestCase):
                 set_store(self.store)
 
     def test_nltk_life_restart_is_continuation_with_phase5(self):
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             interrupted = self._run(h1, first=100, total=200)
             uninterrupted = self._run(h2, first=0, total=200)
         self.assertEqual(interrupted, uninterrupted)

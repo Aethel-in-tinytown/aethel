@@ -72,8 +72,14 @@ class MockLLM:
             "oxygen": "DRIVE: conscience — reflect on my actions and principles.",
         }[low]
 
-    def moral_score(self, action: str, philosophers, weights=None,
-                    lens_factors=None, lens_citations=None) -> tuple:
+    def moral_score(
+        self,
+        action: str,
+        philosophers,
+        weights=None,
+        lens_factors=None,
+        lens_citations=None,
+    ) -> tuple:
         """Score actual council voters with optional per-voice weights.
 
         Unmatched voices abstain; negated hits are ignored. All-abstain neutrality is

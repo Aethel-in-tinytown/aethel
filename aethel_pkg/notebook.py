@@ -174,9 +174,7 @@ class Notebook:
         for lemma, token in seen.items():
             entry = self.entries.get(lemma)
             if entry is None:
-                definition, example, synset = choose_synset(
-                    wordnet, lemma, token.pos
-                )
+                definition, example, synset = choose_synset(wordnet, lemma, token.pos)
                 entry = {
                     "lemma": lemma,
                     "first_form": token.text,
@@ -245,9 +243,7 @@ class Notebook:
         order is a pure function of the notebook (no randomness is
         consumed deciding what she may say)."""
         rank = {HERS: 0, KNOWN: 1, PRESSED: 2}
-        words = [
-            e["lemma"] for e in self.entries.values() if e["status"] in statuses
-        ]
+        words = [e["lemma"] for e in self.entries.values() if e["status"] in statuses]
         return sorted(words, key=lambda w: (rank[self.entries[w]["status"]], w))
 
     # -- persistence ----------------------------------------------------

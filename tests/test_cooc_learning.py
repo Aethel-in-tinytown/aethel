@@ -31,6 +31,7 @@ against. Unit tests run on a fake backend so they need no NLTK
 data; integration tests use the real backend and skip when it is
 not provisioned.
 """
+
 import contextlib
 import io
 import os
@@ -83,16 +84,11 @@ class FakeLang:
     def analyze(self, text):
         import re as _re
 
-        sentences = [
-            (m.start(), m.end())
-            for m in _re.finditer(r"[^.!?]+[.!?]?", text)
-        ]
+        sentences = [(m.start(), m.end()) for m in _re.finditer(r"[^.!?]+[.!?]?", text)]
         tokens = []
         for m in _re.finditer(r"[A-Za-z]+", text):
             surface = m.group()
-            tokens.append(
-                Token(surface, m.start(), m.end(), surface.lower(), "NN")
-            )
+            tokens.append(Token(surface, m.start(), m.end(), surface.lower(), "NN"))
         return Analysis(text, tuple(sentences), tuple(tokens))
 
     def content(self, token):
@@ -287,9 +283,7 @@ class TestRecallAssociation(unittest.TestCase):
     def test_identical_lemmas_earn_no_association(self):
         # whale~whale is already paid by the overlap term; the graph
         # must not pay it twice.
-        score, why = self.engine.score(
-            "whale", "whale", cooc={"whale": {"whale": 9}}
-        )
+        score, why = self.engine.score("whale", "whale", cooc={"whale": {"whale": 9}})
         self.assertEqual(why["assoc_score"], 0)
         self.assertAlmostEqual(score, 0.75, places=6)
 
@@ -383,17 +377,19 @@ class TestIntegrationRealBackend(unittest.TestCase):
         self.addCleanup(self.store.close)
 
     def organism(self, backend="nltk"):
-        return Aethel(StubWorld(), parents=("Donald",), seed=42,
-                      language_backend=backend)
+        return Aethel(
+            StubWorld(), parents=("Donald",), seed=42, language_backend=backend
+        )
 
     def _feed_meals(self, a, times=3):
         with contextlib.redirect_stdout(io.StringIO()):
             for _ in range(times):
-                with patch.object(a, "forage_classic", return_value=MEAL), \
-                        patch.object(org_mod, "forage", return_value=MEAL), \
-                        patch.object(org_mod, "forage_news", return_value=MEAL), \
-                        patch.object(org_mod, "forage_school",
-                                     return_value=MEAL):
+                with (
+                    patch.object(a, "forage_classic", return_value=MEAL),
+                    patch.object(org_mod, "forage", return_value=MEAL),
+                    patch.object(org_mod, "forage_news", return_value=MEAL),
+                    patch.object(org_mod, "forage_school", return_value=MEAL),
+                ):
                     a.forage_and_eat()
 
     def test_dream_and_letter_hooks_fire_in_nltk_life(self):
@@ -427,18 +423,26 @@ class TestIntegrationRealBackend(unittest.TestCase):
         store = Store(config.db_path())
         set_store(store)
         self.addCleanup(store.close)
-        fixture_cooc = {"whale": {"ocean": 2, "lantern": 1},
-                        "ocean": {"whale": 2},
-                        "lantern": {"whale": 1}}
-        store.save_blob("state", {
-            "seed": 42,
-            "language": self.backend.metadata,
-            "concepts": {"whale": 3, "ocean": 2, "lantern": 1},
-            "lemma_index": {"whale": {"whale": 3}, "ocean": {"ocean": 2},
-                            "lantern": {"lantern": 1}},
-            "cooc": fixture_cooc,
-            "tick_count": 500,
-        })
+        fixture_cooc = {
+            "whale": {"ocean": 2, "lantern": 1},
+            "ocean": {"whale": 2},
+            "lantern": {"whale": 1},
+        }
+        store.save_blob(
+            "state",
+            {
+                "seed": 42,
+                "language": self.backend.metadata,
+                "concepts": {"whale": 3, "ocean": 2, "lantern": 1},
+                "lemma_index": {
+                    "whale": {"whale": 3},
+                    "ocean": {"ocean": 2},
+                    "lantern": {"lantern": 1},
+                },
+                "cooc": fixture_cooc,
+                "tick_count": 500,
+            },
+        )
         a = self.organism()
         self.assertEqual(a.cooc, fixture_cooc)
         # And the shape this version writes back is the shape the
@@ -479,13 +483,15 @@ class TestIntegrationRealBackend(unittest.TestCase):
         }
 
         def canned(source):
-            return {"source": source, "title": f"Fixture {source}",
-                    "text": canned_texts[source]}
+            return {
+                "source": source,
+                "title": f"Fixture {source}",
+                "text": canned_texts[source],
+            }
 
         def scrub(obj):
             if isinstance(obj, dict):
-                return {k: scrub(v) for k, v in obj.items()
-                        if k not in ("t", "ts")}
+                return {k: scrub(v) for k, v in obj.items() if k not in ("t", "ts")}
             if isinstance(obj, list):
                 return [scrub(v) for v in obj]
             return obj
@@ -496,34 +502,50 @@ class TestIntegrationRealBackend(unittest.TestCase):
                 store = Store(config.db_path())
                 set_store(store)
                 try:
-                    with patch.object(
-                        Aethel, "forage_classic",
-                        lambda self: canned("classic"),
-                    ), patch.object(
-                        org_mod, "forage", lambda rng=None: canned("wikipedia")
-                    ), patch.object(
-                        org_mod, "forage_news",
-                        lambda rng=None: canned("newsroom"),
-                    ), patch.object(
-                        org_mod, "forage_school",
-                        lambda rng=None: canned("schoolhouse"),
-                    ), contextlib.redirect_stdout(io.StringIO()):
-                        a = Aethel(StubWorld(), parents=("Donald",),
-                                   seed=42, language_backend="nltk")
+                    with (
+                        patch.object(
+                            Aethel,
+                            "forage_classic",
+                            lambda self: canned("classic"),
+                        ),
+                        patch.object(
+                            org_mod, "forage", lambda rng=None: canned("wikipedia")
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_news",
+                            lambda rng=None: canned("newsroom"),
+                        ),
+                        patch.object(
+                            org_mod,
+                            "forage_school",
+                            lambda rng=None: canned("schoolhouse"),
+                        ),
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        a = Aethel(
+                            StubWorld(),
+                            parents=("Donald",),
+                            seed=42,
+                            language_backend="nltk",
+                        )
                         for _ in range(first):
                             a.tick()
                         if first:
                             store.close()
                             store = Store(config.db_path())
                             set_store(store)
-                            a = Aethel(StubWorld(), parents=("Donald",),
-                                       seed=42, language_backend="nltk")
+                            a = Aethel(
+                                StubWorld(),
+                                parents=("Donald",),
+                                seed=42,
+                                language_backend="nltk",
+                            )
                         for _ in range(total - first):
                             a.tick()
                     snap = {
                         "journal": [
-                            (t, e, scrub(d))
-                            for t, e, d in store.recent(limit=10 ** 9)
+                            (t, e, scrub(d)) for t, e, d in store.recent(limit=10**9)
                         ],
                         "state": scrub(store.load_blob("state")),
                     }
@@ -532,13 +554,13 @@ class TestIntegrationRealBackend(unittest.TestCase):
                 finally:
                     set_store(self.store)
 
-        with tempfile.TemporaryDirectory() as h1, \
-                tempfile.TemporaryDirectory() as h2:
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
             interrupted = run(h1, first=130, total=260)
             uninterrupted = run(h2, first=0, total=260)
         events = [e for _, e, _ in uninterrupted["journal"]]
-        self.assertIn("cooc_learned", events,
-                      "sanity: the run exercised Phase 6a coverage")
+        self.assertIn(
+            "cooc_learned", events, "sanity: the run exercised Phase 6a coverage"
+        )
         self.assertTrue(uninterrupted["state"]["cooc"])
         self.assertEqual(interrupted, uninterrupted)
 
@@ -590,21 +612,23 @@ class TestGoldenWithGraph(unittest.TestCase):
         for belief in BELIEFS:
             words = list(dict.fromkeys(self.engine.content_map(belief)))
             for i, x in enumerate(words):
-                for y in words[i + 1:]:
+                for y in words[i + 1 :]:
                     row = self.cooc.setdefault(x, {})
                     row[y] = row.get(y, 0) + 1
                     back = self.cooc.setdefault(y, {})
                     back[x] = back.get(x, 0) + 1
 
     def test_frankenstein_golden_holds_with_graph(self):
-        out = self.engine.recall(FRANK_QUERY, self.cands, k=4,
-                                 stats=self.stats, cooc=self.cooc)
+        out = self.engine.recall(
+            FRANK_QUERY, self.cands, k=4, stats=self.stats, cooc=self.cooc
+        )
         self.assertEqual(out[0].text, BELIEF_FRANK)
         self.assertGreater(out[0].score, out[1].score)
 
     def test_pride_golden_holds_with_graph(self):
-        out = self.engine.recall(PRIDE_QUERY, self.cands, k=4,
-                                 stats=self.stats, cooc=self.cooc)
+        out = self.engine.recall(
+            PRIDE_QUERY, self.cands, k=4, stats=self.stats, cooc=self.cooc
+        )
         self.assertEqual(out[0].text, BELIEF_PRIDE)
         self.assertGreater(out[0].score, out[1].score)
 
