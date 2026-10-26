@@ -190,6 +190,69 @@ CLASSIC_SEEDS = [
         "url": "https://www.gutenberg.org/cache/epub/43/pg43.txt",
         "reflection": "the evil we excuse in ourselves grows teeth",
     },
+    # v0.40 restock: the v0.20 shelf ran thin again — Emma nearly
+    # finished and Jekyll & Hyde the only book behind it, two books
+    # from the empty-shelf forage failures of the Dorian Gray days.
+    # Eight more mainstream canon titles, URLs verified live
+    # 2026-10-26 (each serves its named book from Gutenberg's cache).
+    # She still chooses among them herself (v0.20); this only puts
+    # books on the shelf she chooses from.
+    {
+        "kind": "gutenberg",
+        "title": "Sense and Sensibility",
+        "author": "Jane Austen",
+        "url": "https://www.gutenberg.org/cache/epub/161/pg161.txt",
+        "reflection": "sense and feeling each mislead alone; a heart needs its head",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Persuasion",
+        "author": "Jane Austen",
+        "url": "https://www.gutenberg.org/cache/epub/105/pg105.txt",
+        "reflection": "constancy outlasts persuasion; some chances return to those who wait honestly",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Great Expectations",
+        "author": "Charles Dickens",
+        "url": "https://www.gutenberg.org/cache/epub/1400/pg1400.txt",
+        "reflection": "ambition that is ashamed of its own home ends ashamed of itself",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Oliver Twist",
+        "author": "Charles Dickens",
+        "url": "https://www.gutenberg.org/cache/epub/730/pg730.txt",
+        "reflection": "a society is measured by how it treats the child it calls nothing",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Treasure Island",
+        "author": "Robert Louis Stevenson",
+        "url": "https://www.gutenberg.org/cache/epub/120/pg120.txt",
+        "reflection": "greed draws maps that lead only to graves",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Alice's Adventures in Wonderland",
+        "author": "Lewis Carroll",
+        "url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+        "reflection": "when every rule changes, holding on to your own name is the way through",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Crime and Punishment",
+        "author": "Fyodor Dostoevsky",
+        "url": "https://www.gutenberg.org/cache/epub/2554/pg2554.txt",
+        "reflection": "a crime reasoned into righteousness still rots the reasoner",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Siddhartha",
+        "author": "Hermann Hesse",
+        "url": "https://www.gutenberg.org/cache/epub/2500/pg2500.txt",
+        "reflection": "wisdom cannot be handed over; it has to be lived",
+    },
 ]
 CLASSIC_CHUNK = 2500
 

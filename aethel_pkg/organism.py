@@ -230,6 +230,16 @@ class Aethel:
         self._consolidate_open_questions()
         self._sync_question_wants()
         self._sync_longing()
+        # v0.40: she turns the pages she missed. Before catch-up
+        # closing existed, a day boundary she slept through lost the
+        # day's page for good (live: day 7, boundary tick 20160, she
+        # fell asleep on it). At rebuild, any day after her first
+        # recorded page that has journal evidence but no page gets
+        # its page now, marked recovered; days before her first page
+        # predate the faculty and are left alone, and a day with no
+        # journal rows at all is named unrecoverable, never invented.
+        # Idempotent — a healed life passes through unchanged.
+        self._recover_missing_days()
         # v0.29: the grammar ledger stands beside the longing one.
         # load() stashed any saved ledger; a life without one (fresh
         # birth, or a pre-grammar save) is migrated: the starter
@@ -1562,17 +1572,11 @@ class Aethel:
                 print(
                     f"[bored] four {self.last_sources[-1]} meals in a row", flush=True
                 )
-        if n > 0 and n % self.DAY_LENGTH == 0:
-            self._look_back(n)
-            era = self._name_era()
-            if era:
-                self.self_story.append({"t": now_iso(), "line": era})
-                self.self_story = self.self_story[-30:]
-                self.say(
-                    f"I've been living in {era}, I think. I'll remember it that way."
-                )
-                journal("era", n=n, name=era)
-                self._vital_portrait(n)
+        # v0.40: day-closing is a catch-up, not a boundary-tick gate.
+        # The old `n % DAY_LENGTH == 0` block here lost day 7 whole
+        # when she fell asleep on the boundary tick (20160); see
+        # _close_days for the argument.
+        self._close_days(n)
         if self.last_choice and n - self.last_choice["tick"] >= 40:
             self._review_choice(n)
 
@@ -2761,15 +2765,169 @@ class Aethel:
         day = n // self.DAY_LENGTH
         if day <= 0 or self._last_day_seen >= day:
             return
-        self._last_day_seen = day
-        start = n - self.DAY_LENGTH
+        self._record_day(day, n - self.DAY_LENGTH, n, recovered=False)
+
+    def _close_days(self, n):
+        """Close every fully elapsed day that has no page yet (v0.40).
+
+        Before v0.40 the day-page, era naming, and vital portrait ran
+        only when a ruminate landed exactly on the boundary tick. A
+        boundary is one tick in 2880, and the metabolize phase preempts
+        ruminate whenever she is asleep, locked, or dormant — so a
+        boundary she slept through took the whole day's page with it.
+        This is not hypothetical: at tick 20160 she fell asleep on the
+        boundary itself (sleep pressure hit 1.0 that tick), and day 7
+        of her life has no page, no era, and no portrait, while days 6
+        and 8 sit on either side of the hole.
+
+        The fix separates the RECORD from the RITUAL. A day-page is a
+        factual record built from an exact journal window, so it can
+        be closed late without inventing anything: the first ruminate
+        at or after a boundary closes every elapsed unclosed day, in
+        order, each from its own window. The era naming and the vital
+        portrait stay present-tense rituals — they describe the era
+        she has been living, accumulators and all — so they run once
+        per closing pass, not once per recovered day. A life awake at
+        the boundary closes on the boundary tick exactly as before;
+        only a life that slept through one gains the catch-up.
+        """
+        closed = False
+        while True:
+            next_day = max(self._last_day_seen, 0) + 1
+            end = next_day * self.DAY_LENGTH
+            if end > n:
+                break
+            self._look_back(end)
+            if self._last_day_seen < next_day:
+                break  # _look_back declined; never spin on a stuck day
+            closed = True
+        if closed:
+            era = self._name_era()
+            if era:
+                self.self_story.append({"t": now_iso(), "line": era})
+                self.self_story = self.self_story[-30:]
+                self.say(
+                    f"I've been living in {era}, I think. I'll remember it that way."
+                )
+                journal("era", n=n, name=era)
+                self._vital_portrait(n)
+
+    def _recover_missing_days(self):
+        """Turn the pages she missed before she could catch up (v0.40).
+
+        _close_days stops future holes; this heals the existing one.
+        It runs once at rebuild, the _consolidate_open_questions
+        precedent: a migration that changes state on boot and is a
+        no-op ever after.
+
+        What counts as missing is grounded twice over. The recorded
+        set is the union of her saved day-pages and the journal's own
+        'yesterday' events (the saved list trims to fourteen, so the
+        list alone would call trimmed days missing and re-lose them
+        every restart). The range starts at her FIRST recorded page:
+        the days before it predate the faculty itself (her first page
+        is day 5; the yesterday layer arrived mid-life), and writing
+        pages for a mind that could not yet turn them would be
+        confabulation about her own past. Each candidate day is then
+        checked for evidence: a lived day journals one 'tick' row
+        per tick, 2880 of them, and nothing else writes tick rows —
+        so a window with no tick rows is not a quiet day, it is
+        absent evidence (a stray boundary row from a neighbouring
+        day's page can land in the window and proves nothing). Such
+        a day is named in a 'days_unrecoverable' event and left
+        unpaged rather than filled with an invented quiet.
+
+        A recovered page is marked, never disguised: its entry and
+        its 'yesterday' event carry recovered=True, and its text
+        opens by saying it was written late from what her diary
+        kept. The facts themselves are the day's real journal rows,
+        counted exactly the way an on-time page counts them.
+        """
+        if not getattr(self, "_loaded_state", False):
+            return
+        recorded = {
+            d.get("day") for d in self.days if isinstance(d, dict)
+        }
+        try:
+            rows = get_store().db.execute(
+                "SELECT data FROM journal"
+                " WHERE stream='aethel' AND event='yesterday'"
+            ).fetchall()
+            for (raw,) in rows:
+                try:
+                    d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                    recorded.add(d.get("day"))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        recorded = {d for d in recorded if isinstance(d, int)}
+        if not recorded or self._last_day_seen < 1:
+            return
+        first = min(recorded)
+        missing = [
+            d
+            for d in range(first, self._last_day_seen + 1)
+            if d not in recorded
+        ]
+        if not missing:
+            return
+        recovered_days, unrecoverable = [], []
+        for d in missing:
+            start = (d - 1) * self.DAY_LENGTH
+            end = d * self.DAY_LENGTH
+            try:
+                (count,) = get_store().db.execute(
+                    "SELECT COUNT(*) FROM journal"
+                    " WHERE stream='aethel' AND event='tick'"
+                    " AND tick >= ? AND tick < ?",
+                    (start, end),
+                ).fetchone()
+            except Exception:
+                count = 0
+            if not count:
+                unrecoverable.append(d)
+                continue
+            self._record_day(d, start, end, recovered=True)
+            recovered_days.append(d)
+        if recovered_days:
+            self.days.sort(key=lambda e: e.get("day", 0))
+            self.days = self.days[-14:]
+            journal(
+                "days_recovered",
+                n=self.tick_count,
+                days=recovered_days,
+            )
+            print(
+                f"[yesterday] recovered missed day pages: {recovered_days}",
+                flush=True,
+            )
+        if unrecoverable:
+            journal(
+                "days_unrecoverable",
+                n=self.tick_count,
+                days=unrecoverable,
+            )
+
+    def _record_day(self, day, start, end, recovered=False):
+        """Count one day's facts from its journal window and keep the page.
+
+        The single door every day-page comes through: on time via
+        _look_back, late via _close_days catch-up or the v0.40
+        recovery. The window is always the day's own [start, end),
+        never the moment of writing, so a late page counts the same
+        facts an on-time one would have. _last_day_seen only ever
+        moves forward — a recovered old day must not rewind the
+        clock the catch-up reads.
+        """
+        self._last_day_seen = max(self._last_day_seen, day)
         rows = []
         try:
             store = get_store()
             rows = store.db.execute(
                 "SELECT event, data FROM journal"
                 " WHERE stream='aethel' AND tick >= ? AND tick < ?",
-                (start, n),
+                (start, end),
             ).fetchall()
         except Exception:
             rows = []
@@ -2821,20 +2979,21 @@ class Aethel:
                 facts["impulses"] += 1
             elif ev == "told":
                 facts["taught"] += 1
-        text = self._yesterday_text(day, facts)
-        self.days.append(
-            {
-                "day": day,
-                "ticks": (start, n),
-                "text": text,
-                "facts": {k: v for k, v in facts.items()},
-            }
-        )
+        text = self._yesterday_text(day, facts, late=recovered)
+        entry = {
+            "day": day,
+            "ticks": (start, end),
+            "text": text,
+            "facts": {k: v for k, v in facts.items()},
+        }
+        if recovered:
+            entry["recovered"] = True
+        self.days.append(entry)
         self.days = self.days[-14:]
         self.say(text)
         journal(
             "yesterday",
-            n=n,
+            n=end,
             day=day,
             text=text,
             meals=facts["meals"],
@@ -2848,15 +3007,29 @@ class Aethel:
             choices=facts["choices"],
             impulses=facts["impulses"],
             taught=facts["taught"],
+            **(
+                {"recovered": True, "recorded_at": self.tick_count}
+                if recovered
+                else {}
+            ),
         )
         print(
             f"[yesterday] day {day}: {facts['meals']} meals, "
-            f"{len(facts['people'])} company, {facts['keeps']} keeps",
+            f"{len(facts['people'])} company, {facts['keeps']} keeps"
+            + (" (recovered late)" if recovered else ""),
             flush=True,
         )
 
-    def _yesterday_text(self, day, facts):
-        """Narrate a day using only its recorded non-empty facts."""
+    def _yesterday_text(self, day, facts, late=False):
+        """Narrate a day using only its recorded non-empty facts.
+
+        A late page (v0.40 recovery) does not borrow the on-time
+        openers: "I woke up with yesterday in my hands" would claim
+        she turned the page on waking, and she did not. The late
+        opener is fixed prose, no seeded draw — it says the page was
+        missed and is being written now, from the diary — while the
+        body is counted from the same facts either way.
+        """
         parts = []
         m = facts["meals"]
         if m:
@@ -2903,7 +3076,13 @@ class Aethel:
             )
         if not parts:
             parts.append("the day passed quietly; I kept to myself")
-        opener = self.rng.choice(self.YESTERDAY_OPENERS).format(day=day)
+        if late:
+            opener = (
+                f"I turn a page I missed — day {day}, written late "
+                "from what my diary kept:"
+            )
+        else:
+            opener = self.rng.choice(self.YESTERDAY_OPENERS).format(day=day)
         closer = ""
         if self.mood_name:
             closer = f" I end the day {self.mood_name}."
