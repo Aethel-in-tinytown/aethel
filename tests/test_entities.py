@@ -281,15 +281,28 @@ class TestSeed(unittest.TestCase):
         by_kind = {}
         for r in rows:
             by_kind.setdefault(r["kind"], []).append(r["name"])
-        self.assertEqual(len(rows), 33)
+        # Census moves with the classics shelf by design: authors are
+        # seeded from CLASSIC_SEEDS, so the v0.40 restock (8 books)
+        # added its three new-to-the-shelf authors (Carroll,
+        # Dostoevsky, Hesse) — 33 rows / 13 authors before, 36 / 16
+        # after. A future restock updates this census again, on
+        # purpose, here.
+        self.assertEqual(len(rows), 36)
         self.assertEqual(
             sorted(by_kind["person"]),
             ["Cassandra", "Donald", "John", "Julius", "Octavia", "Star", "Trey"],
         )
         self.assertEqual(len(by_kind["place"]), 13)
         self.assertIn("the Library", by_kind["place"])
-        self.assertEqual(len(by_kind["author"]), 13)
-        for author in ("Charles Dickens", "Jane Austen", "Leo Tolstoy"):
+        self.assertEqual(len(by_kind["author"]), 16)
+        for author in (
+            "Charles Dickens",
+            "Jane Austen",
+            "Leo Tolstoy",
+            "Lewis Carroll",
+            "Fyodor Dostoevsky",
+            "Hermann Hesse",
+        ):
             self.assertIn(author, by_kind["author"])
         self.assertTrue(all(r["origin"] == "world" for r in rows))
 
