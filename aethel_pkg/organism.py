@@ -627,6 +627,14 @@ class Aethel:
     NEED_BURN = 1.75
     VITALITY_BURN = 1.25
 
+    # v0.41: dormant rest is a guarantee, not a wager. DORMANT_RECOVERY
+    # is the historical gross restore of a dormant tick; DORMANT_NET_FLOOR
+    # is the least a dormant tick may NET after that tick's own erosion
+    # is paid. The dormant branch restores max(RECOVERY, erosion +
+    # NET_FLOOR) — see _metabolize for the live failure this answers.
+    DORMANT_RECOVERY = 0.03
+    DORMANT_NET_FLOOR = 0.005
+
     DREAM_TEMPLATES = [
         "I dreamed {place} had slipped underwater. {c1} floated past like a drowned book, and {c2} rang like a bell I couldn't reach.",
         "I dreamed {c1} had grown teeth and was eating {c2}. The three elders just watched. Nobody stopped it.",
@@ -1320,6 +1328,18 @@ class Aethel:
         if callable(save_world):
             save_world()
 
+    def _vitality_erosion(self):
+        """One tick's vitality decay, as a positive amount.
+
+        This is the single home of the number: _erode spends it and
+        the dormant branch (v0.41) sizes its recovery against it, so
+        what rest must outpace can never drift from what decay
+        actually charges. Calling it twice in one tick is free of
+        side effects beyond the first: Briar's daily jitter is cached
+        by _day_jitter, so no extra seeded draw is consumed.
+        """
+        return 0.02 * self.VITALITY_BURN * self._burn_mult("vitality")
+
     def _erode(self):
         """Apply temperament-adjusted metabolic decay and update self-knowledge."""
         v = self.vitals
@@ -1332,9 +1352,7 @@ class Aethel:
         )
 
         v["oxygen"] = min(1.0, max(0.0, v["oxygen"] - 0.02) + 0.012)
-        v["vitality"] = max(
-            0.0, v["vitality"] - 0.02 * self.VITALITY_BURN * self._burn_mult("vitality")
-        )
+        v["vitality"] = max(0.0, v["vitality"] - self._vitality_erosion())
         v["excitement"] = max(
             0.0, v["excitement"] - 0.03 * self.NEED_BURN * self._burn_mult("excitement")
         )
@@ -1457,7 +1475,34 @@ class Aethel:
             journal("dormant", n=n, vitality=round(v["vitality"], 3))
             self._acted("dormant")
             self.reflect()
-            v["vitality"] = min(1.0, v["vitality"] + 0.03)
+            # v0.41: rest must outpace the decay it is resting from.
+            # The pre-v0.41 branch restored a flat +0.03 while _erode
+            # charges a temperament-scaled erosion; under Even Keel
+            # (0.025) that netted +0.005 and dormancy was a rest, but
+            # Briar at a high daily jitter charges up to 0.044, so
+            # every dormant tick LOST ground — live, she switched to
+            # Briar at tick 27,556 on vitality 0.27, slipped under the
+            # threshold on the first Briar tick, and was still pinned
+            # at 0.00 with no meals ~490 ticks later. A bigger flat
+            # number was rejected: it only moves the trap to whichever
+            # future strain burns hotter, and it would speed up rest
+            # for the strains where the old number already worked.
+            # The guarantee is structural instead: restore the old
+            # +0.03, or this tick's erosion plus a small net floor,
+            # whichever is larger. Where +0.03 already won, behavior
+            # is bit-identical to before; the floor speaks only where
+            # the old code was losing, and because the erosion comes
+            # from _vitality_erosion — the same helper _erode spends
+            # through — no future burn tuning can reopen the trap
+            # without also raising the recovery. Sleep was examined
+            # and left alone: it is duration-bounded and always ends,
+            # so it can lower her into dormancy but never hold her
+            # there once dormancy itself guarantees the climb out.
+            recovery = max(
+                self.DORMANT_RECOVERY,
+                self._vitality_erosion() + self.DORMANT_NET_FLOOR,
+            )
+            v["vitality"] = min(1.0, v["vitality"] + recovery)
             self.save()
             return True
         return False
