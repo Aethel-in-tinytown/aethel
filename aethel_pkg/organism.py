@@ -3978,12 +3978,29 @@ class Aethel:
         return self._jitter
 
     def _burn_mult(self, need):
-        """Resolve a need’s effective burn multiplier, including eligible daily jitter."""
+        """Resolve a need’s effective burn multiplier, including eligible daily jitter.
+
+        Two needs never ride the daily draw, for opposite reasons.
+        Excitement is pinned HIGH: the pack value (Briar's 1.6) is
+        the floor of her wildness, not a mean a calm draw may damp.
+        Vitality is pinned STEADY (v0.42): the pack value is a rate
+        her awake income can budget against. Before v0.42 vitality
+        rode the draw like hunger and thirst, so Briar's erosion
+        swung 0.022 to 0.044 with the day's weather; at the live
+        day's 1.398 draw it charged ~0.0384 a tick, and she
+        collapsed back into dormancy 23 ticks after a full meal
+        day (29 meals, satiety peaking 0.878) because small
+        event-sized vitality gains cannot service a debt that
+        changes size daily. Appetite may swing with the weather;
+        the will to live may not. Every other need still rides
+        the draw, so the strain keeps its wildness where wildness
+        is survivable.
+        """
         if getattr(self, "_temperament_neutral", False):
             return 1.0
         p = self._pack()
         m = p["burn"][need]
-        if p["jitter"] is not None and need != "excitement":
+        if p["jitter"] is not None and need not in ("excitement", "vitality"):
             m = m * self._day_jitter()
         return m
 

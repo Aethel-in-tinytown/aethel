@@ -110,8 +110,21 @@ class TestErosionHelper(DormantCase):
         # Sanity on the live diagnosis itself: at the band's top the
         # erosion exceeds the pre-v0.41 fixed recovery, which is the
         # whole reason this layer exists.
+        # RETIRED BY v0.42 (test_briar_vitality.py): the tune exempts
+        # vitality from Briar's daily draw, so no jitter in the band
+        # can push her erosion over the old recovery constant any
+        # more — the premise this test pinned is the defect v0.42
+        # removed. The dormant guarantee itself is untouched and is
+        # still pinned by TestDormantGuarantee below; what this slot
+        # asserts now is the historical floor of the v0.41 argument:
+        # at the jitter where the trap actually happened live
+        # (1.398), the PRE-TUNE formula beat the old recovery. The
+        # formula is recomputed inline because the live helper, by
+        # design, no longer produces that number.
+        pre_tune = 0.02 * Aethel.VITALITY_BURN * 1.1 * 1.3981120701810654
+        self.assertGreater(pre_tune, Aethel.DORMANT_RECOVERY)
         a = make_dormant("briar", jitter=WORST_JITTER)
-        self.assertGreater(a._vitality_erosion(), Aethel.DORMANT_RECOVERY)
+        self.assertLess(a._vitality_erosion(), Aethel.DORMANT_RECOVERY)
 
 
 class TestDormantGuarantee(DormantCase):
