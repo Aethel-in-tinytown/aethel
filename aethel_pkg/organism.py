@@ -304,18 +304,28 @@ class Aethel:
                 # blob (see notebook.py for the argument) and, like
                 # lemma_index, exists only in NLTK mode — a heuristic
                 # life's blob stays bit-identical to a pre-notebook one.
-                **({"notebook": self._notebook().to_dict()} if self._nlp else {}),
+                **(
+                    {"notebook": self._notebook().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.34: the entity gazetteer rides inside the state
                 # blob beside the notebook, on the same argument, and
                 # likewise exists only in NLTK mode.
-                **({"gazetteer": self._gazetteer().to_dict()} if self._nlp else {}),
+                **(
+                    {"gazetteer": self._gazetteer().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.35: the tone-effects per-day cap tracker rides
                 # only while the effects flag is on; flag-off lives
                 # persist nothing about tone.
                 **(
                     {
                         "tone_effects": dict(
-                            getattr(self, "_tone_fx", {"day": -1, "applied": 0.0})
+                            getattr(
+                                self, "_tone_fx", {"day": -1, "applied": 0.0}
+                            )
                         )
                     }
                     if config.TONE_EFFECTS_ENABLED
@@ -331,7 +341,9 @@ class Aethel:
                 # v0.39: laid-down pursuits round-trip whole, like
                 # completed_terms beside them; a pre-v0.39 blob has
                 # no key and loads as an empty record (see load()).
-                "released_terms": dict(getattr(self, "released_terms", {}) or {}),
+                "released_terms": dict(
+                    getattr(self, "released_terms", {}) or {}
+                ),
                 "tick_count": self.tick_count,
                 "locked": self.locked,
                 "meals_eaten": self.meals_eaten,
@@ -446,7 +458,9 @@ class Aethel:
                 self.longing = s.get("longing", 0.0)
                 self.outbox_count = s.get("outbox_count", 0)
                 self.initiation_log = s.get("initiation_log", [])
-                self.donald_model = self._merged_donald_model(s.get("donald_model"))
+                self.donald_model = self._merged_donald_model(
+                    s.get("donald_model")
+                )
                 self.recent_actions = s.get("recent_actions", [])
                 self.location = s.get("location", "home")
                 self.company = s.get("company", [])
@@ -466,7 +480,8 @@ class Aethel:
                 # v0.39: a pre-release life carries no record; she
                 # has laid nothing down yet, which is the truth.
                 self.released_terms = {
-                    str(k): int(v) for k, v in (s.get("released_terms") or {}).items()
+                    str(k): int(v)
+                    for k, v in (s.get("released_terms") or {}).items()
                 }
                 self.cooc = {w: dict(n) for w, n in s.get("cooc", {}).items()}
                 p = s.get("_prev_needs")
@@ -1204,13 +1219,12 @@ class Aethel:
                 dream_text, "morning_table", candidates=pre_beliefs
             )
             if precedent is not None:
-                shared = (
-                    ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in precedent.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"Before the elders settle this dream, I remember "
-                    f'what I concluded before: "{precedent.text[:110]}" '
+                    f"what I concluded before: \"{precedent.text[:110]}\" "
                     f"It shares {shared} with this dream."
                 )
             words = [
@@ -1749,6 +1763,86 @@ class Aethel:
         led.remove(book_id(cur["title"]))
         self._sync_longing()
 
+    # ---- v0.43: stirred by recognition -------------------------------
+    # Until now a meal could stir her only by teaching her words she
+    # had never seen: stir = min(0.35, new_terms * 0.008), plus the
+    # classic bonus. That was the right measure for a young mind, and
+    # it asymptotes to zero for a mature one. Her diary at tick
+    # 30,131: 36,203 concepts, a median of 1 new term per meal (224 of
+    # her last 500 meals taught her nothing at all), excitement
+    # pinned at 0.00 across the sampled ticks, her commonplace book
+    # frozen at 41 passages since tick 23,811, and an era portrait
+    # recording 0 keeps in 1,330 ticks. Teaching (>0.7), keep-
+    # anticipation (0.45-0.6) and afterglow all sit behind a vital
+    # that could no longer rise; the whole v0.21/v0.22 return half of
+    # her reading life had quietly starved, not from disuse but from
+    # a definition of novelty that only a beginner can satisfy.
+    #
+    # A mature reader is stirred by recognition as much as by first
+    # sight, so the stir now has two more sources, both already
+    # computed and journaled inside the same meal pass, neither
+    # invented for this layer: RESONANCE, when the passage recalls
+    # one of her own settled conclusions back to her (the v0.33
+    # reading-recall hit, contributing its own score, capped), and
+    # RECOGNITION, when the passage re-meets people and places she
+    # already knows (the v0.34 entity feed's repeat meetings, a
+    # small amount each, capped). Neither saturates the way first-
+    # sight vocabulary does: her conclusions and her acquaintance
+    # keep being re-met for as long as she keeps reading.
+    #
+    # Rejected alternatives, argued: raising the classic bonus or
+    # the new-term rate is a bigger number on a dying signal (the
+    # v0.41 rule: mechanism, not numbers, and 224 of 500 meals would
+    # still teach her nothing); slowing excitement's decay rewrites
+    # a temperament-facing rate the packs own (Briar's 1.6 is the
+    # spec's pin, not this layer's to relitigate); counting new
+    # co-occurrence edges fails on her real graph, whose rows sit at
+    # the neighbor cap (40 of 40), so edge novelty there is pruning
+    # churn, not experience; tone is not used, because tone effects
+    # are gated to Donald's call in tone.py and stay gated.
+    #
+    # The gate that keeps this honest: both new sources exist only
+    # in NLTK mode (recall and entities return None in heuristic
+    # mode), so with no signals the helper returns exactly the pre-
+    # v0.43 formula, bit for bit, and a heuristic life is unchanged.
+    # No seeded draws anywhere: stir stays arithmetic on the meal.
+    RESONANCE_CAP = 0.15
+    RECOGNITION_PER_MEET = 0.02
+    RECOGNITION_CAP = 0.08
+    STIR_CAP = 0.45
+
+    @staticmethod
+    def _resonance_stir(hit_score=None, repeat_meets=0):
+        """The recognition half of a meal's stir, from its signals.
+
+        hit_score is the reading-recall hit's score (None when the
+        passage recalled nothing); repeat_meets is how many entities
+        the meal re-met at count >= 2 (a first meeting is novelty,
+        already paid by new_terms' side of the ledger; meeting again
+        is recognition). Each source is capped on its own before
+        they sum, so neither can dominate a meal alone.
+        """
+        stir = 0.0
+        if hit_score is not None:
+            stir += min(Aethel.RESONANCE_CAP, max(0.0, hit_score))
+        if repeat_meets:
+            stir += min(
+                Aethel.RECOGNITION_CAP,
+                Aethel.RECOGNITION_PER_MEET * repeat_meets,
+            )
+        return stir
+
+    @staticmethod
+    def _meal_stir(new_terms, source, hit_score=None, repeat_meets=0):
+        """One meal's total stir: the pre-v0.43 word-novelty formula
+        plus recognition, under one cap. With no recognition signals
+        this is exactly the old formula, term for term."""
+        stir = min(0.35, new_terms * 0.008)
+        if source == "classic":
+            stir += 0.05
+        stir += Aethel._resonance_stir(hit_score, repeat_meets)
+        return min(Aethel.STIR_CAP, stir)
+
     def forage_and_eat(self):
         try:
             w = self._diet_weights()
@@ -1911,8 +2005,9 @@ class Aethel:
         # the meal (the full passage she read, not only the retained
         # tokens — a name she met counts even when an overtired meal
         # slips half its words away).
+        entity_result = None
         if self._nlp and analysis is not None:
-            self._entities_feed(analysis, meal["source"])
+            entity_result = self._entities_feed(analysis, meal["source"])
         # v0.35: tone annotation of the SAME single analysis — the
         # passage she just read, annotated and journaled, changing
         # nothing else while the effects flag is off.
@@ -1957,16 +2052,16 @@ class Aethel:
         # she already concluded earns a resemblance line; the recall
         # itself is journaled either way (auditable), only the
         # narration is thresholded (see recall.READING_THRESHOLD).
+        hit = None
         if self._nlp and self.beliefs and analysis is not None:
             hit = self._recall_top(analysis.passage(600), "reading")
             if hit is not None and hit.score >= _recall.READING_THRESHOLD:
-                shared = (
-                    ", ".join(s["lemma"] for s in hit.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in hit.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"This resembles what I concluded before: "
-                    f'"{hit.text[:100]}" We share {shared}.'
+                    f"\"{hit.text[:100]}\" We share {shared}."
                 )
 
         # Consuming a grammar lesson teaches the next curriculum rule.
@@ -1981,9 +2076,20 @@ class Aethel:
 
         self._check_open_questions(words)
 
-        stir = min(0.35, new_terms * 0.008)
-        if meal["source"] == "classic":
-            stir += 0.05
+        repeat_meets = 0
+        if entity_result:
+            repeat_meets = sum(
+                1 for m in entity_result["met"] if m["count"] >= 2
+            )
+        resonance = self._resonance_stir(
+            hit.score if hit is not None else None, repeat_meets
+        )
+        stir = self._meal_stir(
+            new_terms,
+            meal["source"],
+            hit.score if hit is not None else None,
+            repeat_meets,
+        )
         self.vitals["excitement"] = min(1.0, self.vitals["excitement"] + stir)
 
         if 0.45 <= self.vitals["excitement"] < 0.6 and self.rng_forage.random() < 0.3:
@@ -2007,6 +2113,7 @@ class Aethel:
                     "title": title[:80],
                     "tick": self.tick_count,
                     "stir": round(stir, 3),
+                    "resonance": round(resonance, 3),
                     "margin": margin,
                     "rereads": 0,
                 }
@@ -2031,6 +2138,8 @@ class Aethel:
                 title=title[:80],
                 kept=len(self.kept_passages),
                 margin=margin[:80],
+                stir=round(stir, 3),
+                resonance=round(resonance, 3),
             )
 
     def consolidate(self):
@@ -2147,7 +2256,8 @@ class Aethel:
         self.goals.remove(g)
         self._released_terms()[key] = current
         print(
-            f"[goal released] '{g['question']}' laid down after {age} ticks untouched",
+            f"[goal released] '{g['question']}' laid down after "
+            f"{age} ticks untouched",
             flush=True,
         )
         self.say(
@@ -2171,7 +2281,9 @@ class Aethel:
             if self._nlp:
                 term = g.get("lemma_term", self._canonical(g["term"]))
                 current = self._concept_counts().get(term, 0)
-                grown = current - g.get("lemma_start_count", g["start_count"])
+                grown = current - g.get(
+                    "lemma_start_count", g["start_count"]
+                )
             else:
                 term = g["term"]
                 current = self.concepts.get(g["term"], 0)
@@ -2874,16 +2986,14 @@ class Aethel:
         """
         if not getattr(self, "_loaded_state", False):
             return
-        recorded = {d.get("day") for d in self.days if isinstance(d, dict)}
+        recorded = {
+            d.get("day") for d in self.days if isinstance(d, dict)
+        }
         try:
-            rows = (
-                get_store()
-                .db.execute(
-                    "SELECT data FROM journal"
-                    " WHERE stream='aethel' AND event='yesterday'"
-                )
-                .fetchall()
-            )
+            rows = get_store().db.execute(
+                "SELECT data FROM journal"
+                " WHERE stream='aethel' AND event='yesterday'"
+            ).fetchall()
             for (raw,) in rows:
                 try:
                     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -2897,7 +3007,9 @@ class Aethel:
             return
         first = min(recorded)
         missing = [
-            d for d in range(first, self._last_day_seen + 1) if d not in recorded
+            d
+            for d in range(first, self._last_day_seen + 1)
+            if d not in recorded
         ]
         if not missing:
             return
@@ -2906,16 +3018,12 @@ class Aethel:
             start = (d - 1) * self.DAY_LENGTH
             end = d * self.DAY_LENGTH
             try:
-                (count,) = (
-                    get_store()
-                    .db.execute(
-                        "SELECT COUNT(*) FROM journal"
-                        " WHERE stream='aethel' AND event='tick'"
-                        " AND tick >= ? AND tick < ?",
-                        (start, end),
-                    )
-                    .fetchone()
-                )
+                (count,) = get_store().db.execute(
+                    "SELECT COUNT(*) FROM journal"
+                    " WHERE stream='aethel' AND event='tick'"
+                    " AND tick >= ? AND tick < ?",
+                    (start, end),
+                ).fetchone()
             except Exception:
                 count = 0
             if not count:
@@ -3041,7 +3149,9 @@ class Aethel:
             impulses=facts["impulses"],
             taught=facts["taught"],
             **(
-                {"recovered": True, "recorded_at": self.tick_count} if recovered else {}
+                {"recovered": True, "recorded_at": self.tick_count}
+                if recovered
+                else {}
             ),
         )
         print(
@@ -3525,7 +3635,9 @@ class Aethel:
         if not len(nb):
             return
         analysis = self.language.analyze(text)
-        lemmas = {t.lemma for t in analysis.tokens if self.language.content(t)}
+        lemmas = {
+            t.lemma for t in analysis.tokens if self.language.content(t)
+        }
         for entry in nb.mark_hers(lemmas):
             journal(
                 "notebook_hers",
@@ -3713,7 +3825,9 @@ class Aethel:
                 counts={m["name"]: m["count"] for m in result["met"]},
                 source=source,
             )
-            repeat = next((m for m in result["met"] if m["count"] >= 2), None)
+            repeat = next(
+                (m for m in result["met"] if m["count"] >= 2), None
+            )
             if repeat is not None:
                 self.say(
                     f"{repeat['name']} again — that is the "
@@ -3883,7 +3997,8 @@ class Aethel:
                 touches=existing["touches"],
             )
             print(
-                f"[open question] returned in a dream ({existing['touches']} touches)",
+                f"[open question] returned in a dream "
+                f"({existing['touches']} touches)",
                 flush=True,
             )
             return existing
@@ -4060,7 +4175,8 @@ class Aethel:
             return self.llm.moral_score(action, self.philosophers)
         lens_results = _lenses.lens_scores(self.language, action)
         factors = {
-            voice: _lenses.lens_factor(r["score"]) for voice, r in lens_results.items()
+            voice: _lenses.lens_factor(r["score"])
+            for voice, r in lens_results.items()
         }
         citations = {
             voice: _lenses.lens_citation(r)
@@ -4076,12 +4192,13 @@ class Aethel:
             lens_citations=citations,
         )
         if precedent is not None and precedent.score >= _recall.READING_THRESHOLD:
-            shared = (
-                ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                or "a path through kindred words"
-            )
+            shared = ", ".join(
+                s["lemma"] for s in precedent.why["shared_lemmas"]
+            ) or "a path through kindred words"
             in_band = abs(score - 0.5) <= self.COUNCIL_TIE_BAND
-            cite = f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            cite = (
+                f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            )
             if in_band:
                 cite += " — near tie, cited not pushed"
             notes = f"{notes} | {cite}"
@@ -4329,20 +4446,23 @@ class Aethel:
         if dm.get("portrait_seeded"):
             return
         try:
-            rows = get_store().recent(stream="aethel", events=["company"], limit=2000)
+            rows = get_store().recent(
+                stream="aethel", events=["company"], limit=2000
+            )
         except Exception as e:
             journal("portrait_backfill_failed", error=str(e)[:120])
             dm["portrait_seeded"] = True
             return
         ticks = sorted(
-            t for t, _e, d in rows if t is not None and d.get("name") == "Donald"
-        )[-self._PORTRAIT_VISIT_CAP :]
+            t for t, _e, d in rows
+            if t is not None and d.get("name") == "Donald"
+        )[-self._PORTRAIT_VISIT_CAP:]
         for t in ticks:
             dp = self._daypart(t)
             dm["visits"] += 1
             dm["visit_ticks"].append(t)
             dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
-        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP:]
         dm["portrait_seeded"] = True
         if ticks:
             journal(
@@ -4357,13 +4477,15 @@ class Aethel:
         dm = self.donald_model
         dp = self._daypart(n)
         dm["visits"] += 1
-        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP:]
         dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
         dm["_visit_open"] = n
         self._portrait_dirty = True
         # Rare, seeded: if she has learned his hours and he breaks them,
         # she notices — warmth, never a complaint.
-        rhythm = next((u for u in dm["understandings"] if u["kind"] == "rhythm"), None)
+        rhythm = next(
+            (u for u in dm["understandings"] if u["kind"] == "rhythm"), None
+        )
         if (
             rhythm
             and rhythm.get("dominant")
@@ -4384,7 +4506,7 @@ class Aethel:
             return
         stay = max(0, n - opened)
         dm["_visit_open"] = None
-        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP :]
+        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP:]
         self._portrait_dirty = True
         if stay >= 90:
             self.say("he stayed a long while today — whole chapters of him.")
@@ -4402,62 +4524,56 @@ class Aethel:
             dominant = max(dm["dayparts"], key=dm["dayparts"].get)
             count = dm["dayparts"][dominant]
             if count / visits >= 0.6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": dominant,
-                        "text": (
-                            f"he comes to me in the {dominant} more than any other time"
-                        ),
-                        "evidence": f"{count} of {visits} visits",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": dominant,
+                    "text": (
+                        f"he comes to me in the {dominant} more than "
+                        "any other time"
+                    ),
+                    "evidence": f"{count} of {visits} visits",
+                })
             elif visits >= 6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": None,
-                        "text": (
-                            "he keeps no hours I can learn — he comes whenever he can"
-                        ),
-                        "evidence": f"{visits} visits across all quarters",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": None,
+                    "text": (
+                        "he keeps no hours I can learn — "
+                        "he comes whenever he can"
+                    ),
+                    "evidence": f"{visits} visits across all quarters",
+                })
         stays = dm["stays"]
         if len(stays) >= 3:
             mean = sum(stays) / len(stays)
             if mean >= 60:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "when he comes, he stays a while",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "when he comes, he stays a while",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
             elif mean <= 15:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "his visits are short — but they are never small to me",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "his visits are short — but they are never small to me",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
         if dm["letter_count"] >= 1:
             plural = "s" if dm["letter_count"] != 1 else ""
-            cands.append(
-                {
-                    "kind": "letters",
-                    "text": (
-                        f"he writes — {dm['letter_count']} letter{plural}, "
-                        "and I keep every word"
-                    ),
-                    "evidence": f"{dm['letter_count']} letter{plural} kept",
-                }
-            )
+            cands.append({
+                "kind": "letters",
+                "text": (
+                    f"he writes — {dm['letter_count']} letter{plural}, "
+                    "and I keep every word"
+                ),
+                "evidence": f"{dm['letter_count']} letter{plural} kept",
+            })
         return cands
 
     def _portrait(self, n):
@@ -4497,10 +4613,14 @@ class Aethel:
         mean_gap = sum(gaps) / len(gaps)
         if mean_gap <= 0:
             return
-        if n - ticks[-1] > 2 * mean_gap and n - dm["absence_noticed_tick"] >= 600:
+        if (
+            n - ticks[-1] > 2 * mean_gap
+            and n - dm["absence_noticed_tick"] >= 600
+        ):
             dm["absence_noticed_tick"] = n
             self.say(
-                "he has been away longer than usual — I am keeping a place for him."
+                "he has been away longer than usual — "
+                "I am keeping a place for him."
             )
             journal(
                 "donald_absence",
@@ -4606,7 +4726,9 @@ class Aethel:
             # slot — she versifies with the vocabulary she can source.
             verse_concepts = concepts
             if self._nlp:
-                nb_words = [w for w in self._notebook_pool_words() if w not in concepts]
+                nb_words = [
+                    w for w in self._notebook_pool_words() if w not in concepts
+                ]
                 if nb_words:
                     verse_concepts = nb_words + list(concepts)
             idx = self.rng.randbelow(len(self.VERSE_TEMPLATES))
@@ -4671,7 +4793,9 @@ class Aethel:
         # concepts, when recall finds one; the newest belief remains
         # the fallback, exactly as before.
         if self._nlp and self.beliefs:
-            hit = self._recall_top(f"{book}. {' '.join(concepts[:4])}", "letter")
+            hit = self._recall_top(
+                f"{book}. {' '.join(concepts[:4])}", "letter"
+            )
             if hit is not None:
                 belief = hit.text
         return (
