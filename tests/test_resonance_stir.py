@@ -39,6 +39,7 @@ Isolation: partial instances (the test_dormant_recovery pattern);
 the live diary is never opened and the helpers draw no seeded
 stream at all (stir is arithmetic on the meal).
 """
+
 import unittest
 
 import aethel_pkg.organism as org
@@ -80,9 +81,7 @@ class TestStirFormula(unittest.TestCase):
 
     def test_resonance_is_the_hit_score_capped(self):
         self.assertAlmostEqual(Aethel._resonance_stir(0.06, 0), 0.06)
-        self.assertAlmostEqual(
-            Aethel._resonance_stir(0.9, 0), Aethel.RESONANCE_CAP
-        )
+        self.assertAlmostEqual(Aethel._resonance_stir(0.9, 0), Aethel.RESONANCE_CAP)
         self.assertEqual(Aethel._resonance_stir(None, 0), 0.0)
         self.assertEqual(Aethel._resonance_stir(-0.5, 0), 0.0)
 
@@ -90,12 +89,8 @@ class TestStirFormula(unittest.TestCase):
         self.assertAlmostEqual(
             Aethel._resonance_stir(None, 1), Aethel.RECOGNITION_PER_MEET
         )
-        self.assertAlmostEqual(
-            Aethel._resonance_stir(None, 4), Aethel.RECOGNITION_CAP
-        )
-        self.assertAlmostEqual(
-            Aethel._resonance_stir(None, 40), Aethel.RECOGNITION_CAP
-        )
+        self.assertAlmostEqual(Aethel._resonance_stir(None, 4), Aethel.RECOGNITION_CAP)
+        self.assertAlmostEqual(Aethel._resonance_stir(None, 40), Aethel.RECOGNITION_CAP)
 
     def test_recognition_sources_sum_under_one_total_cap(self):
         total = Aethel._meal_stir(400, "classic", 0.9, 40)
