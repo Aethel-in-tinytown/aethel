@@ -18,6 +18,7 @@ recorded. Tests:
    -> no nudge;
 8. the initiation log persists across save/load (a restart is a nap).
 """
+
 import os
 import tempfile
 import unittest
@@ -39,15 +40,27 @@ def rich_aethel(tmp):
     a.concepts = {"loneliness": 9, "captain": 7, "freedom": 5}
     a.beliefs = ["Kindness is a discipline, not a mood."]
     a.dreams = ["I dreamed the library kept breathing after I left."]
-    a.kept_passages = [{
-        "text": "Call me Ishmael. Some years ago", "title": "Moby Dick",
-        "tick": 90, "margin": "Margin note: the part I'll come back to.",
-        "source": "classic", "stir": 0.5}]
-    a.open_questions = [{
-        "text": "If I learned everything, would I still be me?",
-        "keywords": ["learned"], "tick": 10, "touches": 0}]
-    a.days = [{"day": 1, "ticks": [0, 100],
-               "text": "I ate and read and the town was kind."}]
+    a.kept_passages = [
+        {
+            "text": "Call me Ishmael. Some years ago",
+            "title": "Moby Dick",
+            "tick": 90,
+            "margin": "Margin note: the part I'll come back to.",
+            "source": "classic",
+            "stir": 0.5,
+        }
+    ]
+    a.open_questions = [
+        {
+            "text": "If I learned everything, would I still be me?",
+            "keywords": ["learned"],
+            "tick": 10,
+            "touches": 0,
+        }
+    ]
+    a.days = [
+        {"day": 1, "ticks": [0, 100], "text": "I ate and read and the town was kind."}
+    ]
     a.mood_name = "luminous"
     a.mood = 0.8
     a.awareness = 0.10
@@ -55,8 +68,13 @@ def rich_aethel(tmp):
     a.initiation_log = []
     a.longing = 1.0
     a.sleep_pressure = 0.1
-    a.vitals = {"satiety": 0.8, "hydration": 0.8, "oxygen": 1.0,
-                "vitality": 0.8, "excitement": 0.1}
+    a.vitals = {
+        "satiety": 0.8,
+        "hydration": 0.8,
+        "oxygen": 1.0,
+        "vitality": 0.8,
+        "excitement": 0.1,
+    }
     a.donald_model = {"letter_count": 0, "words": {}, "last_tick": 0}
     a.reading_list = []
     a.location = "home"
@@ -64,6 +82,7 @@ def rich_aethel(tmp):
     a.tick_count = 100
     journaled = []
     import aethel_pkg.organism as org
+
     a._saved_journal = org.journal
     org.journal = lambda event, **kw: journaled.append((event, kw))
     a.journaled = journaled
@@ -79,6 +98,7 @@ class TestInitiation(unittest.TestCase):
 
     def tearDown(self):
         import aethel_pkg.organism as org
+
         org.journal = self.a._saved_journal
         if self._saved_home is None:
             os.environ.pop("AETHEL_HOME", None)
@@ -134,8 +154,7 @@ class TestInitiation(unittest.TestCase):
         self.assertIn("longing_before", kw)
         self.assertTrue(kw["text"])  # recall() can quote her own words
         # the old untyped event name is gone; the typed one replaces it
-        self.assertFalse([ev for ev, _ in self.a.journaled
-                          if ev == "expression"])
+        self.assertFalse([ev for ev, _ in self.a.journaled if ev == "expression"])
 
     def test_piece_lands_in_outbox_named_for_kind(self):
         self.a.express()
@@ -192,18 +211,19 @@ class TestInitiation(unittest.TestCase):
         self.a.express()
         kw = self._initiations()[0]
         self.assertEqual(kw["kind"], "question")
-        self.assertIn("If I learned everything, would I still be me?",
-                      kw["text"])
+        self.assertIn("If I learned everything, would I still be me?", kw["text"])
         self.assertEqual(self.a.open_questions[0]["touches"], 1)
         self.assertEqual(len(self.a.open_questions), 1)  # drawn, not invented
 
     def test_note_subject_is_real(self):
         for _ in range(12):  # seeded; whichever subject she picks
             label, detail = self.a._note_subject()
-            real = ("Moby Dick" in detail
-                    or "Kindness is a discipline" in detail
-                    or "library kept breathing" in detail
-                    or "the town was kind" in detail)
+            real = (
+                "Moby Dick" in detail
+                or "Kindness is a discipline" in detail
+                or "library kept breathing" in detail
+                or "the town was kind" in detail
+            )
             self.assertTrue(real, f"note subject not from her life: {detail!r}")
 
     def test_nudge_points_at_something_she_did(self):
@@ -212,10 +232,13 @@ class TestInitiation(unittest.TestCase):
         kw = self._initiations()[0]
         self.assertEqual(kw["kind"], "nudge")
         body = kw["text"]
-        real = ("commonplace book" in body and "1 passages" in body
-                or "luminous" in body
-                or "day-page" in body
-                or "postbox" in body)
+        real = (
+            "commonplace book" in body
+            and "1 passages" in body
+            or "luminous" in body
+            or "day-page" in body
+            or "postbox" in body
+        )
         self.assertTrue(real, f"nudge points at nothing real: {body!r}")
 
     def test_eligibility_gates_kinds(self):
@@ -227,8 +250,9 @@ class TestInitiation(unittest.TestCase):
         self.a.outbox_count = 0
         self.assertEqual(self.a._initiation_kinds(), ["note"])
         # a question needs a real open question
-        self.a.open_questions = [{"text": "why?", "keywords": [],
-                                  "tick": 1, "touches": 0}]
+        self.a.open_questions = [
+            {"text": "why?", "keywords": [], "tick": 1, "touches": 0}
+        ]
         self.assertIn("question", self.a._initiation_kinds())
         self.assertNotIn("nudge", self.a._initiation_kinds())
         # a nudge needs something she has done worth showing
@@ -250,6 +274,7 @@ class TestInitiation(unittest.TestCase):
         # a restart: a fresh organism loading the saved life. make_aethel
         # injects a fresh :memory: store, so hold the saved one aside.
         from aethel_pkg.journal import get_store, set_store
+
         saved_store = get_store()
         c = make_aethel()
         set_store(saved_store)
@@ -260,8 +285,9 @@ class TestInitiation(unittest.TestCase):
         c.load()
         self.assertEqual(c.initiation_log, self.a.initiation_log)
         self.assertEqual(len(c.initiation_log), 2)
-        self.assertTrue(all(set(e) == {"tick", "kind", "file"}
-                            for e in c.initiation_log))
+        self.assertTrue(
+            all(set(e) == {"tick", "kind", "file"} for e in c.initiation_log)
+        )
 
 
 if __name__ == "__main__":

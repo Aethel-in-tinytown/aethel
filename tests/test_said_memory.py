@@ -39,6 +39,7 @@ plus a pacing floor (INITIATION_MIN_GAP) between sayings. Tests:
 13. determinism: two same-seed lives with the memory active send
     and hold in identical sequences.
 """
+
 import os
 import tempfile
 import unittest
@@ -68,6 +69,7 @@ class TestSaidMemory(unittest.TestCase):
 
     def tearDown(self):
         import aethel_pkg.organism as org
+
         org.journal = self.a._saved_journal
         if self._saved_home is None:
             os.environ.pop("AETHEL_HOME", None)
@@ -81,8 +83,7 @@ class TestSaidMemory(unittest.TestCase):
     def _mood_only(self, a):
         """Pin her to one unchanging nudge: the named weather."""
         a._something_to_show = lambda: (
-            f"this {a.mood_name} stretch of mine — I named the "
-            "weather, and it has held"
+            f"this {a.mood_name} stretch of mine — I named the weather, and it has held"
         )
         a._initiation_kinds = lambda: ["nudge"]
 
@@ -136,10 +137,14 @@ class TestSaidMemory(unittest.TestCase):
         self._mood_only(self.a)
         body = self.a._compose_nudge()
         # the migrated shape: a remembered saying with no subject
-        self.a.said_log = [{
-            "tick": self.a.tick_count, "kind": "nudge", "key": None,
-            "fp": Aethel._saying_fp(body),
-        }]
+        self.a.said_log = [
+            {
+                "tick": self.a.tick_count,
+                "kind": "nudge",
+                "key": None,
+                "fp": Aethel._saying_fp(body),
+            }
+        ]
         # rich_aethel's longing=1.0 is the overflow regime, which
         # bypasses the memory by design; the live flood happened at
         # 0.61, so that is the regime this test pins
@@ -192,9 +197,7 @@ class TestSaidMemory(unittest.TestCase):
 
     def test_fallback_to_unsaid_kind(self):
         self.a._initiation_kinds = lambda: ["question", "note"]
-        body = self.a._compose_question(
-            self.a.open_questions[0], touch=False
-        )
+        body = self.a._compose_question(self.a.open_questions[0], touch=False)
         self.a._remember_saying(
             "question",
             self.a._saying_key("question", body),
@@ -244,6 +247,7 @@ class TestSaidMemory(unittest.TestCase):
         self.assertTrue(self.a.express())
         self.a.save()
         from aethel_pkg.journal import get_store, set_store
+
         saved_store = get_store()
         c = make_aethel()
         set_store(saved_store)
@@ -258,6 +262,7 @@ class TestSaidMemory(unittest.TestCase):
         c.mood_name = "luminous"
         c.tick_count = self.a.tick_count + Aethel.INITIATION_MIN_GAP
         import aethel_pkg.organism as org
+
         held = []
         real_journal = org.journal
         org.journal = lambda event, **kw: held.append((event, kw))
@@ -269,17 +274,24 @@ class TestSaidMemory(unittest.TestCase):
 
     def test_seed_said_memory_from_journal(self):
         from aethel_pkg.journal import get_store
+
         store = get_store()  # the :memory: store make_aethel injected
         store.log(
             "initiation",
-            {"kind": "nudge", "file": "000050_nudge.txt",
-             "text": "Dear Donald, come and look at the thing."},
+            {
+                "kind": "nudge",
+                "file": "000050_nudge.txt",
+                "text": "Dear Donald, come and look at the thing.",
+            },
             tick=50,
         )
         store.log(
             "initiation",
-            {"kind": "question", "file": "000090_question.txt",
-             "text": "A question I cannot let go of: why?"},
+            {
+                "kind": "question",
+                "file": "000090_question.txt",
+                "text": "A question I cannot let go of: why?",
+            },
             tick=90,
         )
         store.log(  # outside the window: not rebuilt
@@ -296,10 +308,7 @@ class TestSaidMemory(unittest.TestCase):
             self.a.said_log[0]["fp"],
             Aethel._saying_fp("Dear Donald, come and look at the thing."),
         )
-        seeded = [
-            kw for ev, kw in self.a.journaled
-            if ev == "said_memory_seeded"
-        ]
+        seeded = [kw for ev, kw in self.a.journaled if ev == "said_memory_seeded"]
         self.assertEqual(len(seeded), 1)
         self.assertEqual(seeded[0]["count"], 2)
         # idempotent: a life carrying a memory is left alone
@@ -314,9 +323,7 @@ class TestSaidMemory(unittest.TestCase):
 
     def test_fingerprint_matches_journal_excerpt(self):
         body = "Dear Donald,\n\nNote from the town: " + "word " * 200
-        self.assertEqual(
-            Aethel._saying_fp(body), Aethel._saying_fp(body[:300])
-        )
+        self.assertEqual(Aethel._saying_fp(body), Aethel._saying_fp(body[:300]))
         self.assertEqual(
             Aethel._saying_fp("Hello   Brave\nWorld"),
             Aethel._saying_fp("hello brave world"),
@@ -327,20 +334,14 @@ class TestSaidMemory(unittest.TestCase):
             seq = []
             for i in range(10):
                 a.tick_count = 100 + i * (Aethel.INITIATION_MIN_GAP + 1)
-                before = len(
-                    [1 for ev, _ in a.journaled if ev == "initiation"]
-                )
+                before = len([1 for ev, _ in a.journaled if ev == "initiation"])
                 sent = a.express()
                 seq.append(sent)
                 if sent:
-                    kw = [
-                        kw for ev, kw in a.journaled
-                        if ev == "initiation"
-                    ][-1]
+                    kw = [kw for ev, kw in a.journaled if ev == "initiation"][-1]
                     seq.append((kw["kind"], kw["text"]))
                 self.assertEqual(
-                    len([1 for ev, _ in a.journaled
-                         if ev == "initiation"]),
+                    len([1 for ev, _ in a.journaled if ev == "initiation"]),
                     before + (1 if sent else 0),
                 )
             return seq
