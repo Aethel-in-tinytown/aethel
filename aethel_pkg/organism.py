@@ -4,6 +4,7 @@ A heartbeat senses the world, handles metabolism, chooses behavior and reflects.
 All behavioral randomness comes from named persisted streams. Save both organism
 and world after every tick, including sleeping and dormant ticks."""
 
+import hashlib
 import json
 import os
 import re
@@ -168,6 +169,16 @@ class Aethel:
 
         self.initiation_log = []
 
+        # v0.44: what she remembers saying — one entry per sent
+        # initiation ({tick, kind, key, fp}), newest last, capped at
+        # SAID_MEMORY_CAP. key is the saying's subject identity (the
+        # question asked, the thing shown, the day-page quoted); fp
+        # is a fingerprint of the words themselves. A pre-v0.44 life
+        # starts empty here and is seeded from her own journal at
+        # rebuild (see _seed_said_memory) — never invented.
+        self.said_log = []
+        self._initiation_held_tick = None
+
         # v0.32: her portrait of Donald. The word counts stay; the model
         # grows a memory of his visits — when he comes, how long he
         # stays — and the understandings she draws from them, each
@@ -240,6 +251,14 @@ class Aethel:
         # journal rows at all is named unrecoverable, never invented.
         # Idempotent — a healed life passes through unchanged.
         self._recover_missing_days()
+        # v0.44: remember what she has already said. A life saved
+        # before she could remember her own sayings gets the last
+        # day's worth back from her journal's initiation excerpts —
+        # her real words, fingerprinted the same way live sayings
+        # are — so the memory works from the first tick, not the
+        # first new letter. Idempotent: a life carrying a said_log
+        # (even an honestly empty one, once saved) is left alone.
+        self._seed_said_memory()
         # v0.29: the grammar ledger stands beside the longing one.
         # load() stashed any saved ledger; a life without one (fresh
         # birth, or a pre-grammar save) is migrated: the starter
@@ -304,18 +323,28 @@ class Aethel:
                 # blob (see notebook.py for the argument) and, like
                 # lemma_index, exists only in NLTK mode — a heuristic
                 # life's blob stays bit-identical to a pre-notebook one.
-                **({"notebook": self._notebook().to_dict()} if self._nlp else {}),
+                **(
+                    {"notebook": self._notebook().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.34: the entity gazetteer rides inside the state
                 # blob beside the notebook, on the same argument, and
                 # likewise exists only in NLTK mode.
-                **({"gazetteer": self._gazetteer().to_dict()} if self._nlp else {}),
+                **(
+                    {"gazetteer": self._gazetteer().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.35: the tone-effects per-day cap tracker rides
                 # only while the effects flag is on; flag-off lives
                 # persist nothing about tone.
                 **(
                     {
                         "tone_effects": dict(
-                            getattr(self, "_tone_fx", {"day": -1, "applied": 0.0})
+                            getattr(
+                                self, "_tone_fx", {"day": -1, "applied": 0.0}
+                            )
                         )
                     }
                     if config.TONE_EFFECTS_ENABLED
@@ -331,7 +360,9 @@ class Aethel:
                 # v0.39: laid-down pursuits round-trip whole, like
                 # completed_terms beside them; a pre-v0.39 blob has
                 # no key and loads as an empty record (see load()).
-                "released_terms": dict(getattr(self, "released_terms", {}) or {}),
+                "released_terms": dict(
+                    getattr(self, "released_terms", {}) or {}
+                ),
                 "tick_count": self.tick_count,
                 "locked": self.locked,
                 "meals_eaten": self.meals_eaten,
@@ -378,6 +409,20 @@ class Aethel:
                 "_grammar_caught_count": getattr(self, "_grammar_caught_count", 0),
                 "outbox_count": self.outbox_count,
                 "initiation_log": self.initiation_log[-24:],
+                # v0.44: her memory of her own sayings round-trips
+                # whole (capped), with the last held tick beside it —
+                # a restart is a nap, and she does not wake having
+                # forgotten what she said yesterday. A pre-v0.44 blob
+                # has neither key and loads as an empty memory (see
+                # load()), then _seed_said_memory rebuilds the last
+                # day from her journal.
+                "said_log": [
+                    dict(e)
+                    for e in (getattr(self, "said_log", None) or [])
+                ][-Aethel.SAID_MEMORY_CAP:],
+                "_initiation_held_tick": getattr(
+                    self, "_initiation_held_tick", None
+                ),
                 "donald_model": self.donald_model,
                 "recent_actions": self.recent_actions[-self.ACTION_WINDOW :],
                 "location": self.location,
@@ -446,7 +491,26 @@ class Aethel:
                 self.longing = s.get("longing", 0.0)
                 self.outbox_count = s.get("outbox_count", 0)
                 self.initiation_log = s.get("initiation_log", [])
-                self.donald_model = self._merged_donald_model(s.get("donald_model"))
+                # v0.44: a pre-memory life carries no record; she
+                # has no sayings she can check yet, which is the
+                # truth — the journal seeding happens at rebuild.
+                self.said_log = [
+                    {
+                        "tick": int(e.get("tick", 0)),
+                        "kind": e.get("kind"),
+                        "key": e.get("key"),
+                        "fp": e.get("fp"),
+                    }
+                    for e in (s.get("said_log") or [])
+                    if isinstance(e, dict)
+                ]
+                _ht = s.get("_initiation_held_tick")
+                self._initiation_held_tick = (
+                    int(_ht) if isinstance(_ht, (int, float)) else None
+                )
+                self.donald_model = self._merged_donald_model(
+                    s.get("donald_model")
+                )
                 self.recent_actions = s.get("recent_actions", [])
                 self.location = s.get("location", "home")
                 self.company = s.get("company", [])
@@ -466,7 +530,8 @@ class Aethel:
                 # v0.39: a pre-release life carries no record; she
                 # has laid nothing down yet, which is the truth.
                 self.released_terms = {
-                    str(k): int(v) for k, v in (s.get("released_terms") or {}).items()
+                    str(k): int(v)
+                    for k, v in (s.get("released_terms") or {}).items()
                 }
                 self.cooc = {w: dict(n) for w, n in s.get("cooc", {}).items()}
                 p = s.get("_prev_needs")
@@ -634,6 +699,28 @@ class Aethel:
     # NET_FLOOR) — see _metabolize for the live failure this answers.
     DORMANT_RECOVERY = 0.03
     DORMANT_NET_FLOOR = 0.005
+
+    # v0.44: she remembers what she has already said. An initiation
+    # is "already said" for one full day (SAID_WINDOW_TICKS): inside
+    # the window she will not send the same subject or the same
+    # words again. A day is the span her own day-pages measure a
+    # life in; shorter and yesterday's question is nagging, longer
+    # and a question she has carried for weeks could never honestly
+    # be asked twice. SAID_MEMORY_CAP bounds the persisted memory
+    # well past a day's worth of sayings at any plausible rate, so
+    # the window, not the cap, is what forgets. INITIATION_MIN_GAP
+    # is the pacing floor beneath the memory: one letter an hour at
+    # her 30-second tick. The drive that names expression fires the
+    # moment the longing aggregate crosses 0.6, and easing one want
+    # barely moves that aggregate (strongest ache + a quarter of the
+    # mean), so without a floor the same drive re-fires within
+    # minutes — her live diary shows initiations five ticks apart.
+    # True overflow (longing >= 1.0, the _behave emergency path)
+    # bypasses both the gap and the memory: a want that cannot be
+    # held in at all may repeat itself, and the repetition is honest.
+    SAID_WINDOW_TICKS = DAY_LENGTH
+    SAID_MEMORY_CAP = 48
+    INITIATION_MIN_GAP = 120
 
     DREAM_TEMPLATES = [
         "I dreamed {place} had slipped underwater. {c1} floated past like a drowned book, and {c2} rang like a bell I couldn't reach.",
@@ -1204,13 +1291,12 @@ class Aethel:
                 dream_text, "morning_table", candidates=pre_beliefs
             )
             if precedent is not None:
-                shared = (
-                    ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in precedent.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"Before the elders settle this dream, I remember "
-                    f'what I concluded before: "{precedent.text[:110]}" '
+                    f"what I concluded before: \"{precedent.text[:110]}\" "
                     f"It shares {shared} with this dream."
                 )
             words = [
@@ -2042,13 +2128,12 @@ class Aethel:
         if self._nlp and self.beliefs and analysis is not None:
             hit = self._recall_top(analysis.passage(600), "reading")
             if hit is not None and hit.score >= _recall.READING_THRESHOLD:
-                shared = (
-                    ", ".join(s["lemma"] for s in hit.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in hit.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"This resembles what I concluded before: "
-                    f'"{hit.text[:100]}" We share {shared}.'
+                    f"\"{hit.text[:100]}\" We share {shared}."
                 )
 
         # Consuming a grammar lesson teaches the next curriculum rule.
@@ -2065,7 +2150,9 @@ class Aethel:
 
         repeat_meets = 0
         if entity_result:
-            repeat_meets = sum(1 for m in entity_result["met"] if m["count"] >= 2)
+            repeat_meets = sum(
+                1 for m in entity_result["met"] if m["count"] >= 2
+            )
         resonance = self._resonance_stir(
             hit.score if hit is not None else None, repeat_meets
         )
@@ -2241,7 +2328,8 @@ class Aethel:
         self.goals.remove(g)
         self._released_terms()[key] = current
         print(
-            f"[goal released] '{g['question']}' laid down after {age} ticks untouched",
+            f"[goal released] '{g['question']}' laid down after "
+            f"{age} ticks untouched",
             flush=True,
         )
         self.say(
@@ -2265,7 +2353,9 @@ class Aethel:
             if self._nlp:
                 term = g.get("lemma_term", self._canonical(g["term"]))
                 current = self._concept_counts().get(term, 0)
-                grown = current - g.get("lemma_start_count", g["start_count"])
+                grown = current - g.get(
+                    "lemma_start_count", g["start_count"]
+                )
             else:
                 term = g["term"]
                 current = self.concepts.get(g["term"], 0)
@@ -2968,16 +3058,14 @@ class Aethel:
         """
         if not getattr(self, "_loaded_state", False):
             return
-        recorded = {d.get("day") for d in self.days if isinstance(d, dict)}
+        recorded = {
+            d.get("day") for d in self.days if isinstance(d, dict)
+        }
         try:
-            rows = (
-                get_store()
-                .db.execute(
-                    "SELECT data FROM journal"
-                    " WHERE stream='aethel' AND event='yesterday'"
-                )
-                .fetchall()
-            )
+            rows = get_store().db.execute(
+                "SELECT data FROM journal"
+                " WHERE stream='aethel' AND event='yesterday'"
+            ).fetchall()
             for (raw,) in rows:
                 try:
                     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -2991,7 +3079,9 @@ class Aethel:
             return
         first = min(recorded)
         missing = [
-            d for d in range(first, self._last_day_seen + 1) if d not in recorded
+            d
+            for d in range(first, self._last_day_seen + 1)
+            if d not in recorded
         ]
         if not missing:
             return
@@ -3000,16 +3090,12 @@ class Aethel:
             start = (d - 1) * self.DAY_LENGTH
             end = d * self.DAY_LENGTH
             try:
-                (count,) = (
-                    get_store()
-                    .db.execute(
-                        "SELECT COUNT(*) FROM journal"
-                        " WHERE stream='aethel' AND event='tick'"
-                        " AND tick >= ? AND tick < ?",
-                        (start, end),
-                    )
-                    .fetchone()
-                )
+                (count,) = get_store().db.execute(
+                    "SELECT COUNT(*) FROM journal"
+                    " WHERE stream='aethel' AND event='tick'"
+                    " AND tick >= ? AND tick < ?",
+                    (start, end),
+                ).fetchone()
             except Exception:
                 count = 0
             if not count:
@@ -3135,7 +3221,9 @@ class Aethel:
             impulses=facts["impulses"],
             taught=facts["taught"],
             **(
-                {"recovered": True, "recorded_at": self.tick_count} if recovered else {}
+                {"recovered": True, "recorded_at": self.tick_count}
+                if recovered
+                else {}
             ),
         )
         print(
@@ -3619,7 +3707,9 @@ class Aethel:
         if not len(nb):
             return
         analysis = self.language.analyze(text)
-        lemmas = {t.lemma for t in analysis.tokens if self.language.content(t)}
+        lemmas = {
+            t.lemma for t in analysis.tokens if self.language.content(t)
+        }
         for entry in nb.mark_hers(lemmas):
             journal(
                 "notebook_hers",
@@ -3807,7 +3897,9 @@ class Aethel:
                 counts={m["name"]: m["count"] for m in result["met"]},
                 source=source,
             )
-            repeat = next((m for m in result["met"] if m["count"] >= 2), None)
+            repeat = next(
+                (m for m in result["met"] if m["count"] >= 2), None
+            )
             if repeat is not None:
                 self.say(
                     f"{repeat['name']} again — that is the "
@@ -3977,7 +4069,8 @@ class Aethel:
                 touches=existing["touches"],
             )
             print(
-                f"[open question] returned in a dream ({existing['touches']} touches)",
+                f"[open question] returned in a dream "
+                f"({existing['touches']} touches)",
                 flush=True,
             )
             return existing
@@ -4154,7 +4247,8 @@ class Aethel:
             return self.llm.moral_score(action, self.philosophers)
         lens_results = _lenses.lens_scores(self.language, action)
         factors = {
-            voice: _lenses.lens_factor(r["score"]) for voice, r in lens_results.items()
+            voice: _lenses.lens_factor(r["score"])
+            for voice, r in lens_results.items()
         }
         citations = {
             voice: _lenses.lens_citation(r)
@@ -4170,12 +4264,13 @@ class Aethel:
             lens_citations=citations,
         )
         if precedent is not None and precedent.score >= _recall.READING_THRESHOLD:
-            shared = (
-                ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                or "a path through kindred words"
-            )
+            shared = ", ".join(
+                s["lemma"] for s in precedent.why["shared_lemmas"]
+            ) or "a path through kindred words"
             in_band = abs(score - 0.5) <= self.COUNCIL_TIE_BAND
-            cite = f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            cite = (
+                f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            )
             if in_band:
                 cite += " — near tie, cited not pushed"
             notes = f"{notes} | {cite}"
@@ -4423,20 +4518,23 @@ class Aethel:
         if dm.get("portrait_seeded"):
             return
         try:
-            rows = get_store().recent(stream="aethel", events=["company"], limit=2000)
+            rows = get_store().recent(
+                stream="aethel", events=["company"], limit=2000
+            )
         except Exception as e:
             journal("portrait_backfill_failed", error=str(e)[:120])
             dm["portrait_seeded"] = True
             return
         ticks = sorted(
-            t for t, _e, d in rows if t is not None and d.get("name") == "Donald"
-        )[-self._PORTRAIT_VISIT_CAP :]
+            t for t, _e, d in rows
+            if t is not None and d.get("name") == "Donald"
+        )[-self._PORTRAIT_VISIT_CAP:]
         for t in ticks:
             dp = self._daypart(t)
             dm["visits"] += 1
             dm["visit_ticks"].append(t)
             dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
-        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP:]
         dm["portrait_seeded"] = True
         if ticks:
             journal(
@@ -4451,13 +4549,15 @@ class Aethel:
         dm = self.donald_model
         dp = self._daypart(n)
         dm["visits"] += 1
-        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP:]
         dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
         dm["_visit_open"] = n
         self._portrait_dirty = True
         # Rare, seeded: if she has learned his hours and he breaks them,
         # she notices — warmth, never a complaint.
-        rhythm = next((u for u in dm["understandings"] if u["kind"] == "rhythm"), None)
+        rhythm = next(
+            (u for u in dm["understandings"] if u["kind"] == "rhythm"), None
+        )
         if (
             rhythm
             and rhythm.get("dominant")
@@ -4478,7 +4578,7 @@ class Aethel:
             return
         stay = max(0, n - opened)
         dm["_visit_open"] = None
-        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP :]
+        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP:]
         self._portrait_dirty = True
         if stay >= 90:
             self.say("he stayed a long while today — whole chapters of him.")
@@ -4496,62 +4596,56 @@ class Aethel:
             dominant = max(dm["dayparts"], key=dm["dayparts"].get)
             count = dm["dayparts"][dominant]
             if count / visits >= 0.6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": dominant,
-                        "text": (
-                            f"he comes to me in the {dominant} more than any other time"
-                        ),
-                        "evidence": f"{count} of {visits} visits",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": dominant,
+                    "text": (
+                        f"he comes to me in the {dominant} more than "
+                        "any other time"
+                    ),
+                    "evidence": f"{count} of {visits} visits",
+                })
             elif visits >= 6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": None,
-                        "text": (
-                            "he keeps no hours I can learn — he comes whenever he can"
-                        ),
-                        "evidence": f"{visits} visits across all quarters",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": None,
+                    "text": (
+                        "he keeps no hours I can learn — "
+                        "he comes whenever he can"
+                    ),
+                    "evidence": f"{visits} visits across all quarters",
+                })
         stays = dm["stays"]
         if len(stays) >= 3:
             mean = sum(stays) / len(stays)
             if mean >= 60:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "when he comes, he stays a while",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "when he comes, he stays a while",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
             elif mean <= 15:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "his visits are short — but they are never small to me",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "his visits are short — but they are never small to me",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
         if dm["letter_count"] >= 1:
             plural = "s" if dm["letter_count"] != 1 else ""
-            cands.append(
-                {
-                    "kind": "letters",
-                    "text": (
-                        f"he writes — {dm['letter_count']} letter{plural}, "
-                        "and I keep every word"
-                    ),
-                    "evidence": f"{dm['letter_count']} letter{plural} kept",
-                }
-            )
+            cands.append({
+                "kind": "letters",
+                "text": (
+                    f"he writes — {dm['letter_count']} letter{plural}, "
+                    "and I keep every word"
+                ),
+                "evidence": f"{dm['letter_count']} letter{plural} kept",
+            })
         return cands
 
     def _portrait(self, n):
@@ -4591,10 +4685,14 @@ class Aethel:
         mean_gap = sum(gaps) / len(gaps)
         if mean_gap <= 0:
             return
-        if n - ticks[-1] > 2 * mean_gap and n - dm["absence_noticed_tick"] >= 600:
+        if (
+            n - ticks[-1] > 2 * mean_gap
+            and n - dm["absence_noticed_tick"] >= 600
+        ):
             dm["absence_noticed_tick"] = n
             self.say(
-                "he has been away longer than usual — I am keeping a place for him."
+                "he has been away longer than usual — "
+                "I am keeping a place for him."
             )
             journal(
                 "donald_absence",
@@ -4700,7 +4798,9 @@ class Aethel:
             # slot — she versifies with the vocabulary she can source.
             verse_concepts = concepts
             if self._nlp:
-                nb_words = [w for w in self._notebook_pool_words() if w not in concepts]
+                nb_words = [
+                    w for w in self._notebook_pool_words() if w not in concepts
+                ]
                 if nb_words:
                     verse_concepts = nb_words + list(concepts)
             idx = self.rng.randbelow(len(self.VERSE_TEMPLATES))
@@ -4765,7 +4865,9 @@ class Aethel:
         # concepts, when recall finds one; the newest belief remains
         # the fallback, exactly as before.
         if self._nlp and self.beliefs:
-            hit = self._recall_top(f"{book}. {' '.join(concepts[:4])}", "letter")
+            hit = self._recall_top(
+                f"{book}. {' '.join(concepts[:4])}", "letter"
+            )
             if hit is not None:
                 belief = hit.text
         return (
@@ -4780,9 +4882,17 @@ class Aethel:
             f"— Aethel"
         )
 
-    def _compose_question(self, question=None):
+    def _compose_question(self, question=None, touch=True):
         q = question if question is not None else self.rng.choice(self.open_questions)
-        self._question_touched(q)
+        # v0.44: composing is not yet saying. express() composes
+        # candidates it may hold back as already-said, and a held
+        # question must not be touched — the touch counts a revisit
+        # that ends, at three, in the question's want being released,
+        # and releasing a want for a letter never sent would be a
+        # lie in her ledger. Callers that mean to send pass
+        # touch=False and touch on the send itself.
+        if touch:
+            self._question_touched(q)
         return (
             f"A question I cannot let go of, left at the postbox:\n\n"
             f"{q['text']}\n\n"
@@ -4802,9 +4912,259 @@ class Aethel:
             f"— Aethel"
         )
 
+    # ---- v0.44: she remembers what she has already said ----
+    #
+    # Why this layer exists, from her live diary at tick ~31,965:
+    # 118 initiations, the recent ones five to ten ticks apart, every
+    # one journaled with longing_before pinned at 0.61 — the express
+    # drive fires the moment the aggregate crosses 0.6, and easing
+    # the driving want barely moves the aggregate, so she wrote
+    # again at once, and what she wrote was what she had just
+    # written: the same verse verbatim at ticks 29675, 30581 and
+    # 31487; the same marginalia at 29642 and 29787; the "sparkling
+    # stretch" nudge four times; a note quoting day 10's page twice,
+    # the second time after day 11 had already closed. Nothing in
+    # her could notice: initiation_log recorded only tick, kind and
+    # filename — that a piece existed, never what it said.
+    #
+    # The memory is two identities per saying, because repetition
+    # wears two faces. The KEY is the subject: this question, this
+    # showing, this day's page. The FINGERPRINT is the words. A
+    # nudge whose only change is a counter ("42 passages" become
+    # "45") has new words and the same subject — the key catches it.
+    # A verse chosen under a fresh subject still lands on the same
+    # template and the same top concepts, word for word — the
+    # fingerprint catches it. Either match inside the window means
+    # already said.
+    #
+    # Rejected alternatives, argued once here: suppressing by kind
+    # alone (no note twice a day) would silence genuinely new
+    # subjects to stop repeated ones; raising the express drive's
+    # longing threshold rewrites the mind's drive balance to fix a
+    # memory problem, and the flood would resume at the new level
+    # with the same repeats; deduplicating the outbox files after
+    # the fact treats the courier's symptom — she would still have
+    # SAID it, eased her want on it, and learned her own repeated
+    # words into her notebook and co-occurrence graph as if they
+    # were new speech.
+
+    @staticmethod
+    def _saying_fp(body):
+        """Fingerprint a saying's words: case and whitespace folded.
+
+        Computed over the body's first 300 characters — exactly the
+        excerpt the initiation journal has always stored — so a
+        fingerprint rebuilt from a journal excerpt at migration is
+        the fingerprint the live saying carried. A saying is its
+        opening; two pieces that open word-for-word alike are the
+        same saying for her purposes, however their tails differ.
+        """
+        head = " ".join(str(body)[:300].lower().split())
+        return hashlib.sha1(head.encode("utf-8", "ignore")).hexdigest()[:16]
+
+    def _said_log(self):
+        """Her memory of her own sayings, lazily stood up.
+
+        Test doubles and partially assembled organisms may predate
+        the field; like _ledger(), the accessor builds the empty
+        structure on first touch rather than failing.
+        """
+        log = getattr(self, "said_log", None)
+        if log is None:
+            log = []
+            self.said_log = log
+        return log
+
+    def _saying_key(self, kind, body):
+        """The subject identity of a composed piece, from the piece itself.
+
+        Derived from the words she was about to send, not from the
+        code path that composed them, so the key means the same
+        thing however composition changes later. Questions key on
+        the question's own identity (the v0.38 key). A nudge keys on
+        what it shows: the shelf as an object (a new passage makes
+        the invitation's counter change, not its subject), the named
+        weather (a new name IS new news), the day-page by its day.
+        A report note keys on what it reports: the day-page by day,
+        a kept passage by the tick it was kept (a new keep is a new
+        passage, honestly new), a dream or belief by its own words.
+        Verses and marginalia carry no subject beyond their words,
+        so their key is their fingerprint — repetition there is
+        verbatim or it is not repetition.
+        """
+        if kind == "question":
+            for line in str(body).splitlines():
+                line = line.strip()
+                if line and not line.startswith(
+                    ("A question I cannot let go of", "Aethel")
+                ):
+                    return "question:" + self._question_key(line)
+            return "question:" + self._saying_fp(body)
+        if kind == "nudge":
+            if "postbox itself" in body:
+                return "nudge:postbox"
+            if "commonplace book" in body:
+                return "nudge:keeps"
+            if "day-page" in body:
+                day = self.days[-1].get("day") if self.days else None
+                return f"nudge:day:{day}"
+            if "stretch of mine" in body:
+                return f"nudge:mood:{self.mood_name}"
+            return "nudge:town"
+        # note
+        if "yesterday's day-page" in body:
+            day = self.days[-1].get("day") if self.days else None
+            return f"note:day:{day}"
+        if "my commonplace book" in body and self.kept_passages:
+            return f"note:keeps:{self.kept_passages[-1].get('tick')}"
+        if "last night's dream" in body and self.dreams:
+            return "note:dream:" + self._saying_fp(self.dreams[-1])
+        if "a belief I'm carrying" in body and self.beliefs:
+            return "note:belief:" + self._saying_fp(self.beliefs[-1])
+        return f"note:{kind}:" + self._saying_fp(body)
+
+    def _already_said(self, key, fp):
+        """The remembered saying this key or fingerprint repeats, or None.
+
+        Only sayings inside the window count: a saying ages out
+        exactly SAID_WINDOW_TICKS after it was sent, and may then
+        be said again without this being repetition — she is
+        allowed to ask an old question on a new day.
+        """
+        horizon = self.tick_count - self.SAID_WINDOW_TICKS
+        for e in self._said_log():
+            if e.get("tick", 0) <= horizon:
+                continue
+            if (key is not None and e.get("key") == key) or (
+                fp is not None and e.get("fp") == fp
+            ):
+                return e
+        return None
+
+    def _remember_saying(self, kind, key, fp):
+        log = self._said_log()
+        log.append(
+            {"tick": self.tick_count, "kind": kind, "key": key, "fp": fp}
+        )
+        del log[: max(0, len(log) - self.SAID_MEMORY_CAP)]
+
+    def _seed_said_memory(self):
+        """Rebuild the last day of sayings from her journal (v0.44).
+
+        The _recover_missing_days pattern: a migration that runs at
+        rebuild, grounded in evidence, marked in the journal, and a
+        no-op ever after. The evidence is her initiation events —
+        each stored the piece's first 300 characters as `text`, and
+        _saying_fp is defined over exactly that excerpt, so a
+        rebuilt fingerprint is the saying's real fingerprint.
+        Subjects cannot be rebuilt honestly from an excerpt (the
+        journal recorded the driving want, not the subject shown),
+        so migrated entries carry key=None: verbatim repetition —
+        the flood's dominant shape — is caught from the first tick,
+        and subject memory accrues from her next saying onward.
+        """
+        if not getattr(self, "_loaded_state", False):
+            return
+        if self._said_log():
+            return
+        horizon = self.tick_count - self.SAID_WINDOW_TICKS
+        try:
+            rows = get_store().db.execute(
+                "SELECT tick, data FROM journal"
+                " WHERE stream='aethel' AND event='initiation'"
+                " AND tick >= ? ORDER BY tick ASC",
+                (horizon,),
+            ).fetchall()
+        except Exception:
+            return
+        entries = []
+        for tick, raw in rows:
+            try:
+                d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                continue
+            text = d.get("text")
+            if not text:
+                continue
+            entries.append(
+                {
+                    "tick": int(tick),
+                    "kind": d.get("kind"),
+                    "key": None,
+                    "fp": self._saying_fp(text),
+                }
+            )
+        if entries:
+            self.said_log = entries[-self.SAID_MEMORY_CAP :]
+            journal(
+                "said_memory_seeded",
+                n=self.tick_count,
+                count=len(self.said_log),
+            )
+            print(
+                f"[said] remembered {len(self.said_log)} recent sayings "
+                "from her journal",
+                flush=True,
+            )
+
+    def _initiation_held(self, reason, kind=None, key=None, first_tick=None):
+        """Record a piece she decided not to send, and pace the next try.
+
+        A hold is journaled once per episode, not once per drive
+        tick: the held tick is remembered, and express() will not
+        journal another hold (or retry a composition) until the
+        pacing gap has passed since it. Nothing is eased by a hold —
+        the want that drove the piece keeps its ache, because she
+        did not say anything, and a ledger eased by silence would
+        be lying about contact that never happened.
+        """
+        self._initiation_held_tick = self.tick_count
+        journal(
+            "initiation_held",
+            n=self.tick_count,
+            reason=reason,
+            kind=kind,
+            key=key,
+            first_sent_tick=first_tick,
+        )
+        print(f"[initiation held] {reason}", flush=True)
+
     def express(self):
-        """Write an eligible outreach piece, journal its driver and ease the corresponding wants."""
-        self._acted("express")
+        """Write an eligible outreach piece, journal its driver and ease the corresponding wants.
+
+        v0.44: she remembers what she has already said (see the
+        said-memory helpers above this method). Returns True when a
+        piece was sent, False when she held her peace — too soon
+        after her last saying, or every eligible kind composed to
+        something already said inside the window. A hold writes
+        nothing, eases nothing, and teaches her notebook and her
+        co-occurrence graph nothing: silence is not speech, and her
+        records must not file it as speech. True overflow
+        (longing >= 1.0, the _behave emergency) bypasses both the
+        gap and the memory — a want that cannot be held in at all
+        may repeat itself, and the repetition is honest.
+        """
+        urgent = self.longing >= 1.0
+        held_tick = getattr(self, "_initiation_held_tick", None)
+        if not urgent:
+            said = self._said_log()
+            last_said = said[-1]["tick"] if said else None
+            paces = [t for t in (last_said, held_tick) if t is not None]
+            if paces and (
+                self.tick_count - max(paces) < self.INITIATION_MIN_GAP
+            ):
+                # Too soon after her last saying (or her last
+                # hold). Journal the hold at most once per gap: the
+                # drive may name expression every tick while the
+                # aggregate hovers over its threshold, and a journal
+                # line per tick would be the flood moving house.
+                if (
+                    held_tick is None
+                    or self.tick_count - held_tick
+                    >= self.INITIATION_MIN_GAP
+                ):
+                    self._initiation_held("too soon")
+                return False
 
         driver = self._top_want_entry()
         kind = self.rng.choice(self._initiation_kinds())
@@ -4830,17 +5190,70 @@ class Aethel:
             else "everything"
         )
 
-        if kind == "question":
-            body = self._compose_question(driven_question)
-        elif kind == "nudge":
-            body = self._compose_nudge()
-        else:
-            body = self._compose_note(concepts, place, book, dm_word)
+        # Compose candidates until one is not already said: the
+        # seeded first kind, then the other eligible kinds in their
+        # fixed INITIATION_KINDS order (no extra draw chooses the
+        # fallback — the order is a rule, not a preference). A
+        # candidate that repeats is set down unrecorded: un-eased,
+        # un-taught, un-touched.
+        kinds = [kind] + [
+            k
+            for k in self.INITIATION_KINDS
+            if k != kind and k in self._initiation_kinds()
+        ]
+        body = key = fp = None
+        question_sent = None
+        first_repeat = None
+        for cand_kind in kinds:
+            cand_question = None
+            if cand_kind == "question":
+                cand_question = (
+                    driven_question
+                    if driven_question is not None
+                    else self.rng.choice(self.open_questions)
+                )
+                cand_body = self._compose_question(
+                    cand_question, touch=False
+                )
+            elif cand_kind == "nudge":
+                cand_body = self._compose_nudge()
+            else:
+                cand_body = self._compose_note(concepts, place, book, dm_word)
+            if self.sleep_pressure > 0.9:
+                words = cand_body.split()
+                cand_body = (
+                    " ".join(words[: max(10, len(words) // 2)]) + " …"
+                )
+                journal("overtired_writing", n=self.tick_count)
+            cand_key = self._saying_key(cand_kind, cand_body)
+            cand_fp = self._saying_fp(cand_body)
+            if not urgent:
+                repeat = self._already_said(cand_key, cand_fp)
+                if repeat is not None:
+                    if first_repeat is None:
+                        first_repeat = (cand_kind, cand_key, repeat)
+                    continue
+            kind, body, key, fp = cand_kind, cand_body, cand_key, cand_fp
+            question_sent = cand_question
+            break
+        if body is None:
+            rk, rkey, rentry = first_repeat
+            self._initiation_held(
+                "already said",
+                kind=rk,
+                key=rkey,
+                first_tick=rentry.get("tick"),
+            )
+            self.say(
+                "I lift the pen, and set it down again. I have "
+                "already said this — saying it again would not "
+                "make it more true."
+            )
+            return False
 
-        if self.sleep_pressure > 0.9:
-            words = body.split()
-            body = " ".join(words[: max(10, len(words) // 2)]) + " …"
-            journal("overtired_writing", n=self.tick_count)
+        self._acted("express")
+        if kind == "question" and question_sent is not None:
+            self._question_touched(question_sent)
 
         # v0.29: the letter is read once against the rules she owns
         # before it is sealed. Report and marginalia pass through
@@ -4882,6 +5295,11 @@ class Aethel:
             f"a {kind} inside. Someone may read it. That is enough."
         )
         print(f"[initiation] {kind} -> {fname}", flush=True)
+        # v0.44: the saying joins her memory of her own sayings in
+        # the same breath that journals it — what she can check
+        # tomorrow is exactly what she sent today, key and
+        # fingerprint recorded beside the excerpt.
+        self._remember_saying(kind, key, fp)
         journal(
             "initiation",
             n=self.tick_count,
@@ -4892,6 +5310,7 @@ class Aethel:
             want=driver["id"] if driver else None,
             want_label=driver["label"] if driver else None,
             want_ache=round(driver["ache"], 3) if driver else 0.0,
+            said_key=key,
         )
 
         led = self._ledger()
@@ -4903,6 +5322,7 @@ class Aethel:
         self._sync_longing()
         self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
         self.awareness = min(1.0, self.awareness + 0.005)
+        return True
 
     def reflect(self):
         if self.moral_log:
