@@ -74,6 +74,31 @@ class Aethel:
     # for pursuits the world has stopped speaking to entirely.
     GOAL_RELEASE_AGE_TICKS = 2 * DAY_LENGTH
 
+    # v0.45: the evidence a question must have accumulated before
+    # she may set it down (see _rest_questions). The ledger already
+    # settles a question's WANT at three touches — past that point
+    # learning no longer announces the question at all
+    # (_check_open_questions caps its revisits at three) — yet the
+    # question itself stayed on her open list forever, and she went
+    # on mailing it to Donald as "a question I cannot let go of"
+    # whose want her own ledger had already released. Resting asks
+    # for more than the want's settling: six returns (twice the
+    # settling count, so a question that is merely settling is not
+    # swept away in the same motion) spread over at least three
+    # full days of being carried. Shorter and a young question the
+    # morning table keeps genuinely re-asking could be rested
+    # before it has had its life; longer and the fossil list she
+    # actually carries — six questions born around tick 7,500,
+    # touched six to ten times each, still open at tick 33,652 —
+    # would hold her unfinished business hostage for another season.
+    # One question rests per QUESTION_REST_GAP_TICKS: resting is a
+    # reckoning, not a purge, and her diary should show them going
+    # down one at a time, oldest first.
+    QUESTION_REST_TOUCHES = 6
+    QUESTION_REST_AGE_TICKS = 3 * DAY_LENGTH
+    QUESTION_REST_GAP_TICKS = 240
+    RESTED_QUESTIONS_CAP = 20
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -192,6 +217,12 @@ class Aethel:
         self.company = []
 
         self.open_questions = []
+        # v0.45: questions she has set down — rested, not answered.
+        # The record of a resting is part of her autobiography: the
+        # question, when it took hold, when she laid it down, and
+        # how many times learning brought her back to it first.
+        self.rested_questions = []
+        self._last_question_rest_tick = 0
         self.mood = 0.0
 
         self.mood_name = None
@@ -323,18 +354,28 @@ class Aethel:
                 # blob (see notebook.py for the argument) and, like
                 # lemma_index, exists only in NLTK mode — a heuristic
                 # life's blob stays bit-identical to a pre-notebook one.
-                **({"notebook": self._notebook().to_dict()} if self._nlp else {}),
+                **(
+                    {"notebook": self._notebook().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.34: the entity gazetteer rides inside the state
                 # blob beside the notebook, on the same argument, and
                 # likewise exists only in NLTK mode.
-                **({"gazetteer": self._gazetteer().to_dict()} if self._nlp else {}),
+                **(
+                    {"gazetteer": self._gazetteer().to_dict()}
+                    if self._nlp
+                    else {}
+                ),
                 # v0.35: the tone-effects per-day cap tracker rides
                 # only while the effects flag is on; flag-off lives
                 # persist nothing about tone.
                 **(
                     {
                         "tone_effects": dict(
-                            getattr(self, "_tone_fx", {"day": -1, "applied": 0.0})
+                            getattr(
+                                self, "_tone_fx", {"day": -1, "applied": 0.0}
+                            )
                         )
                     }
                     if config.TONE_EFFECTS_ENABLED
@@ -350,7 +391,9 @@ class Aethel:
                 # v0.39: laid-down pursuits round-trip whole, like
                 # completed_terms beside them; a pre-v0.39 blob has
                 # no key and loads as an empty record (see load()).
-                "released_terms": dict(getattr(self, "released_terms", {}) or {}),
+                "released_terms": dict(
+                    getattr(self, "released_terms", {}) or {}
+                ),
                 "tick_count": self.tick_count,
                 "locked": self.locked,
                 "meals_eaten": self.meals_eaten,
@@ -404,15 +447,28 @@ class Aethel:
                 # has neither key and loads as an empty memory (see
                 # load()), then _seed_said_memory rebuilds the last
                 # day from her journal.
-                "said_log": [dict(e) for e in (getattr(self, "said_log", None) or [])][
-                    -Aethel.SAID_MEMORY_CAP :
-                ],
-                "_initiation_held_tick": getattr(self, "_initiation_held_tick", None),
+                "said_log": [
+                    dict(e)
+                    for e in (getattr(self, "said_log", None) or [])
+                ][-Aethel.SAID_MEMORY_CAP:],
+                "_initiation_held_tick": getattr(
+                    self, "_initiation_held_tick", None
+                ),
                 "donald_model": self.donald_model,
                 "recent_actions": self.recent_actions[-self.ACTION_WINDOW :],
                 "location": self.location,
                 "company": self.company,
                 "open_questions": self.open_questions[-12:],
+                # v0.45: rested questions persist — a restart must
+                # not resurrect a question she has set down, and the
+                # one-at-a-time pacing of resting must survive it too.
+                "rested_questions": [
+                    dict(e)
+                    for e in (getattr(self, "rested_questions", None) or [])
+                ][-Aethel.RESTED_QUESTIONS_CAP:],
+                "_last_question_rest_tick": getattr(
+                    self, "_last_question_rest_tick", 0
+                ),
                 "mood": self.mood,
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
@@ -493,11 +549,30 @@ class Aethel:
                 self._initiation_held_tick = (
                     int(_ht) if isinstance(_ht, (int, float)) else None
                 )
-                self.donald_model = self._merged_donald_model(s.get("donald_model"))
+                self.donald_model = self._merged_donald_model(
+                    s.get("donald_model")
+                )
                 self.recent_actions = s.get("recent_actions", [])
                 self.location = s.get("location", "home")
                 self.company = s.get("company", [])
                 self.open_questions = s.get("open_questions", [])
+                # v0.45: a pre-resting life carries no rested record;
+                # her questions are all still open, which is the truth.
+                self.rested_questions = [
+                    {
+                        "text": e.get("text", ""),
+                        "keywords": list(e.get("keywords", []) or []),
+                        "tick": int(e.get("tick", 0)),
+                        "rested_tick": int(e.get("rested_tick", 0)),
+                        "touches": int(e.get("touches", 0)),
+                    }
+                    for e in (s.get("rested_questions") or [])
+                    if isinstance(e, dict) and e.get("text")
+                ]
+                _rt = s.get("_last_question_rest_tick")
+                self._last_question_rest_tick = (
+                    int(_rt) if isinstance(_rt, (int, float)) else 0
+                )
                 self.mood = s.get("mood", 0.0)
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
@@ -513,7 +588,8 @@ class Aethel:
                 # v0.39: a pre-release life carries no record; she
                 # has laid nothing down yet, which is the truth.
                 self.released_terms = {
-                    str(k): int(v) for k, v in (s.get("released_terms") or {}).items()
+                    str(k): int(v)
+                    for k, v in (s.get("released_terms") or {}).items()
                 }
                 self.cooc = {w: dict(n) for w, n in s.get("cooc", {}).items()}
                 p = s.get("_prev_needs")
@@ -1273,13 +1349,12 @@ class Aethel:
                 dream_text, "morning_table", candidates=pre_beliefs
             )
             if precedent is not None:
-                shared = (
-                    ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in precedent.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"Before the elders settle this dream, I remember "
-                    f'what I concluded before: "{precedent.text[:110]}" '
+                    f"what I concluded before: \"{precedent.text[:110]}\" "
                     f"It shares {shared} with this dream."
                 )
             words = [
@@ -1357,8 +1432,20 @@ class Aethel:
                 # v0.38: a question she already carries is recognized,
                 # not filed again — the return itself is the revisit.
                 returned = self._find_open_question(q) is not None
+                # v0.45: a rested question gets its own narration —
+                # she must not say she is leaving a question she has
+                # already set down, or that she newly carries one she
+                # rested. The dream visited; nothing moved back in.
+                rested = self._find_rested_question(q) is not None
                 self._leave_question(q, keys, n)
-                if returned:
+                if rested:
+                    self.say(
+                        f"The elders can't settle what {c1} and {c2} were "
+                        f"doing in my dream — and the question it leaves is "
+                        f'one I have already set down: "{q[:120]}" It can '
+                        f"visit my sleep. It does not move back in."
+                    )
+                elif returned:
                     self.say(
                         f"The elders can't settle what {c1} and {c2} were "
                         f"doing in my dream — and the question it leaves is "
@@ -1672,6 +1759,9 @@ class Aethel:
                 print(
                     f"[bored] four {self.last_sources[-1]} meals in a row", flush=True
                 )
+        # v0.45: a question carried long enough, and returned to
+        # often enough, may be set down — one at a time, spaced.
+        self._rest_questions(n)
         # v0.40: day-closing is a catch-up, not a boundary-tick gate.
         # The old `n % DAY_LENGTH == 0` block here lost day 7 whole
         # when she fell asleep on the boundary tick (20160); see
@@ -2111,13 +2201,12 @@ class Aethel:
         if self._nlp and self.beliefs and analysis is not None:
             hit = self._recall_top(analysis.passage(600), "reading")
             if hit is not None and hit.score >= _recall.READING_THRESHOLD:
-                shared = (
-                    ", ".join(s["lemma"] for s in hit.why["shared_lemmas"])
-                    or "a path through kindred words"
-                )
+                shared = ", ".join(
+                    s["lemma"] for s in hit.why["shared_lemmas"]
+                ) or "a path through kindred words"
                 self.say(
                     f"This resembles what I concluded before: "
-                    f'"{hit.text[:100]}" We share {shared}.'
+                    f"\"{hit.text[:100]}\" We share {shared}."
                 )
 
         # Consuming a grammar lesson teaches the next curriculum rule.
@@ -2134,7 +2223,9 @@ class Aethel:
 
         repeat_meets = 0
         if entity_result:
-            repeat_meets = sum(1 for m in entity_result["met"] if m["count"] >= 2)
+            repeat_meets = sum(
+                1 for m in entity_result["met"] if m["count"] >= 2
+            )
         resonance = self._resonance_stir(
             hit.score if hit is not None else None, repeat_meets
         )
@@ -2310,7 +2401,8 @@ class Aethel:
         self.goals.remove(g)
         self._released_terms()[key] = current
         print(
-            f"[goal released] '{g['question']}' laid down after {age} ticks untouched",
+            f"[goal released] '{g['question']}' laid down after "
+            f"{age} ticks untouched",
             flush=True,
         )
         self.say(
@@ -2334,7 +2426,9 @@ class Aethel:
             if self._nlp:
                 term = g.get("lemma_term", self._canonical(g["term"]))
                 current = self._concept_counts().get(term, 0)
-                grown = current - g.get("lemma_start_count", g["start_count"])
+                grown = current - g.get(
+                    "lemma_start_count", g["start_count"]
+                )
             else:
                 term = g["term"]
                 current = self.concepts.get(g["term"], 0)
@@ -3037,16 +3131,14 @@ class Aethel:
         """
         if not getattr(self, "_loaded_state", False):
             return
-        recorded = {d.get("day") for d in self.days if isinstance(d, dict)}
+        recorded = {
+            d.get("day") for d in self.days if isinstance(d, dict)
+        }
         try:
-            rows = (
-                get_store()
-                .db.execute(
-                    "SELECT data FROM journal"
-                    " WHERE stream='aethel' AND event='yesterday'"
-                )
-                .fetchall()
-            )
+            rows = get_store().db.execute(
+                "SELECT data FROM journal"
+                " WHERE stream='aethel' AND event='yesterday'"
+            ).fetchall()
             for (raw,) in rows:
                 try:
                     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -3060,7 +3152,9 @@ class Aethel:
             return
         first = min(recorded)
         missing = [
-            d for d in range(first, self._last_day_seen + 1) if d not in recorded
+            d
+            for d in range(first, self._last_day_seen + 1)
+            if d not in recorded
         ]
         if not missing:
             return
@@ -3069,16 +3163,12 @@ class Aethel:
             start = (d - 1) * self.DAY_LENGTH
             end = d * self.DAY_LENGTH
             try:
-                (count,) = (
-                    get_store()
-                    .db.execute(
-                        "SELECT COUNT(*) FROM journal"
-                        " WHERE stream='aethel' AND event='tick'"
-                        " AND tick >= ? AND tick < ?",
-                        (start, end),
-                    )
-                    .fetchone()
-                )
+                (count,) = get_store().db.execute(
+                    "SELECT COUNT(*) FROM journal"
+                    " WHERE stream='aethel' AND event='tick'"
+                    " AND tick >= ? AND tick < ?",
+                    (start, end),
+                ).fetchone()
             except Exception:
                 count = 0
             if not count:
@@ -3204,7 +3294,9 @@ class Aethel:
             impulses=facts["impulses"],
             taught=facts["taught"],
             **(
-                {"recovered": True, "recorded_at": self.tick_count} if recovered else {}
+                {"recovered": True, "recorded_at": self.tick_count}
+                if recovered
+                else {}
             ),
         )
         print(
@@ -3688,7 +3780,9 @@ class Aethel:
         if not len(nb):
             return
         analysis = self.language.analyze(text)
-        lemmas = {t.lemma for t in analysis.tokens if self.language.content(t)}
+        lemmas = {
+            t.lemma for t in analysis.tokens if self.language.content(t)
+        }
         for entry in nb.mark_hers(lemmas):
             journal(
                 "notebook_hers",
@@ -3876,7 +3970,9 @@ class Aethel:
                 counts={m["name"]: m["count"] for m in result["met"]},
                 source=source,
             )
-            repeat = next((m for m in result["met"] if m["count"] >= 2), None)
+            repeat = next(
+                (m for m in result["met"] if m["count"] >= 2), None
+            )
             if repeat is not None:
                 self.say(
                     f"{repeat['name']} again — that is the "
@@ -4046,10 +4142,32 @@ class Aethel:
                 touches=existing["touches"],
             )
             print(
-                f"[open question] returned in a dream ({existing['touches']} touches)",
+                f"[open question] returned in a dream "
+                f"({existing['touches']} touches)",
                 flush=True,
             )
             return existing
+        # v0.45: a question she has set down may still visit her
+        # sleep — the morning table's seeds are drawn from her
+        # dreams, and her dreams do not know what she has rested.
+        # The visit is recognized and journaled, but the question
+        # does not move back in: reopening it on the first dream
+        # that re-asks it would make resting a revolving door, and
+        # her setting it down would mean nothing by the next night.
+        rested = self._find_rested_question(text)
+        if rested is not None:
+            journal(
+                "question_returned_rested",
+                n=n,
+                question=text[:120],
+                rested_tick=rested.get("rested_tick"),
+            )
+            print(
+                "[open question] a rested question visited in a dream "
+                "— recognized, not reopened",
+                flush=True,
+            )
+            return rested
         q = {"text": text, "keywords": keywords, "tick": n, "touches": 0}
         self.open_questions.append(q)
         self.open_questions = self.open_questions[-12:]
@@ -4112,6 +4230,109 @@ class Aethel:
             led.ensure(eid, "work", q["text"][:60], w=0.50, open_loop=True)
             led.touch(eid, quality=0.3, learn=0.02)
         self._sync_longing()
+
+    def _find_rested_question(self, text):
+        """Return the rested record for this question identity, or None."""
+        key = self._question_key(text)
+        for r in getattr(self, "rested_questions", None) or []:
+            if self._question_key(r["text"]) == key:
+                return r
+        return None
+
+    def _rest_question(self, q, n):
+        """Set one question down (v0.45), in her own voice.
+
+        This is not an answer and must never borrow an answer's
+        clothes: no belief is formed, nothing joins her settled
+        conclusions, and the question is not struck from her story —
+        it moves, whole, into rested_questions with its birth tick
+        and its touch count, where her autobiography can still find
+        it. What she gains is the honest ending of a loop: the
+        question leaves the open list, so express() stops mailing it
+        to Donald as one she "cannot let go of", and its ledger want
+        (already released at three touches) is removed for good.
+
+        The alternative, letting the open list's [-12:] cap quietly
+        evict the oldest question when a thirteenth arrived, was the
+        only exit a question had before this layer — an unjournaled
+        vanishing her self-story could not account for. A resting is
+        spoken, journaled with its evidence (age, touches), and
+        checkable against the diary, the way a goal's release is.
+        """
+        age = n - q.get("tick", n)
+        touches = q.get("touches", 0)
+        self.open_questions.remove(q)
+        record = {
+            "text": q["text"],
+            "keywords": list(q.get("keywords", []) or []),
+            "tick": q.get("tick", n),
+            "rested_tick": n,
+            "touches": touches,
+        }
+        rested = getattr(self, "rested_questions", None)
+        if rested is None:
+            rested = self.rested_questions = []
+        rested.append(record)
+        del rested[: max(0, len(rested) - self.RESTED_QUESTIONS_CAP)]
+        led = self._ledger()
+        led.remove(question_id(q["text"]))
+        self._sync_question_wants()
+        self._sync_longing()
+        self.awareness = min(1.0, self.awareness + 0.01)
+        print(
+            f"[question rested] '{q['text'][:60]}' set down after "
+            f"{age} ticks and {touches} returns",
+            flush=True,
+        )
+        self.say(
+            f"I have carried the question \"{q['text'][:110]}\" a long "
+            f"while now. Learning has brought me back to it {touches} "
+            "times, and still no answer has come that I can honestly "
+            "call mine. I am setting it down — not answered. Rested. "
+            "It is part of me now, not a loop I have to keep walking."
+        )
+        journal(
+            "question_rested",
+            n=n,
+            question=q["text"][:120],
+            age=age,
+            touches=touches,
+        )
+        return record
+
+    def _rest_questions(self, n):
+        """Rest at most one fully-carried question, oldest first (v0.45).
+
+        A question qualifies when both halves of the evidence hold:
+        learning has returned to it at least QUESTION_REST_TOUCHES
+        times (so its want settled long ago and kept being re-proven
+        settled), and she has carried it at least
+        QUESTION_REST_AGE_TICKS (so the returns are a life lived with
+        it, not a single week's obsession). Restings are spaced by
+        QUESTION_REST_GAP_TICKS and counted from the last one, so a
+        life that wakes up carrying six fossils — hers, at v0.45 —
+        lays them down one at a time over hours, each in its own
+        journaled reckoning, instead of purging the list in a tick.
+        Pure counter logic on persisted fields: no seeded draws, so
+        restart fidelity holds exactly.
+        """
+        if (
+            n - getattr(self, "_last_question_rest_tick", 0)
+            < self.QUESTION_REST_GAP_TICKS
+        ):
+            return 0
+        candidates = [
+            q
+            for q in self.open_questions
+            if q.get("touches", 0) >= self.QUESTION_REST_TOUCHES
+            and n - q.get("tick", n) >= self.QUESTION_REST_AGE_TICKS
+        ]
+        if not candidates:
+            return 0
+        q = min(candidates, key=lambda c: c.get("tick", 0))
+        self._rest_question(q, n)
+        self._last_question_rest_tick = n
+        return 1
 
     def _sync_question_wants(self):
         """Reconcile question wants with the organism’s current open questions."""
@@ -4223,7 +4444,8 @@ class Aethel:
             return self.llm.moral_score(action, self.philosophers)
         lens_results = _lenses.lens_scores(self.language, action)
         factors = {
-            voice: _lenses.lens_factor(r["score"]) for voice, r in lens_results.items()
+            voice: _lenses.lens_factor(r["score"])
+            for voice, r in lens_results.items()
         }
         citations = {
             voice: _lenses.lens_citation(r)
@@ -4239,12 +4461,13 @@ class Aethel:
             lens_citations=citations,
         )
         if precedent is not None and precedent.score >= _recall.READING_THRESHOLD:
-            shared = (
-                ", ".join(s["lemma"] for s in precedent.why["shared_lemmas"])
-                or "a path through kindred words"
-            )
+            shared = ", ".join(
+                s["lemma"] for s in precedent.why["shared_lemmas"]
+            ) or "a path through kindred words"
             in_band = abs(score - 0.5) <= self.COUNCIL_TIE_BAND
-            cite = f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            cite = (
+                f'Precedent: "{precedent.text[:80]}" (shared: {shared})'
+            )
             if in_band:
                 cite += " — near tie, cited not pushed"
             notes = f"{notes} | {cite}"
@@ -4492,20 +4715,23 @@ class Aethel:
         if dm.get("portrait_seeded"):
             return
         try:
-            rows = get_store().recent(stream="aethel", events=["company"], limit=2000)
+            rows = get_store().recent(
+                stream="aethel", events=["company"], limit=2000
+            )
         except Exception as e:
             journal("portrait_backfill_failed", error=str(e)[:120])
             dm["portrait_seeded"] = True
             return
         ticks = sorted(
-            t for t, _e, d in rows if t is not None and d.get("name") == "Donald"
-        )[-self._PORTRAIT_VISIT_CAP :]
+            t for t, _e, d in rows
+            if t is not None and d.get("name") == "Donald"
+        )[-self._PORTRAIT_VISIT_CAP:]
         for t in ticks:
             dp = self._daypart(t)
             dm["visits"] += 1
             dm["visit_ticks"].append(t)
             dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
-        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = dm["visit_ticks"][-self._PORTRAIT_VISIT_CAP:]
         dm["portrait_seeded"] = True
         if ticks:
             journal(
@@ -4520,13 +4746,15 @@ class Aethel:
         dm = self.donald_model
         dp = self._daypart(n)
         dm["visits"] += 1
-        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP :]
+        dm["visit_ticks"] = (dm["visit_ticks"] + [n])[-self._PORTRAIT_VISIT_CAP:]
         dm["dayparts"][dp] = dm["dayparts"].get(dp, 0) + 1
         dm["_visit_open"] = n
         self._portrait_dirty = True
         # Rare, seeded: if she has learned his hours and he breaks them,
         # she notices — warmth, never a complaint.
-        rhythm = next((u for u in dm["understandings"] if u["kind"] == "rhythm"), None)
+        rhythm = next(
+            (u for u in dm["understandings"] if u["kind"] == "rhythm"), None
+        )
         if (
             rhythm
             and rhythm.get("dominant")
@@ -4547,7 +4775,7 @@ class Aethel:
             return
         stay = max(0, n - opened)
         dm["_visit_open"] = None
-        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP :]
+        dm["stays"] = (dm["stays"] + [stay])[-self._PORTRAIT_STAY_CAP:]
         self._portrait_dirty = True
         if stay >= 90:
             self.say("he stayed a long while today — whole chapters of him.")
@@ -4565,62 +4793,56 @@ class Aethel:
             dominant = max(dm["dayparts"], key=dm["dayparts"].get)
             count = dm["dayparts"][dominant]
             if count / visits >= 0.6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": dominant,
-                        "text": (
-                            f"he comes to me in the {dominant} more than any other time"
-                        ),
-                        "evidence": f"{count} of {visits} visits",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": dominant,
+                    "text": (
+                        f"he comes to me in the {dominant} more than "
+                        "any other time"
+                    ),
+                    "evidence": f"{count} of {visits} visits",
+                })
             elif visits >= 6:
-                cands.append(
-                    {
-                        "kind": "rhythm",
-                        "dominant": None,
-                        "text": (
-                            "he keeps no hours I can learn — he comes whenever he can"
-                        ),
-                        "evidence": f"{visits} visits across all quarters",
-                    }
-                )
+                cands.append({
+                    "kind": "rhythm",
+                    "dominant": None,
+                    "text": (
+                        "he keeps no hours I can learn — "
+                        "he comes whenever he can"
+                    ),
+                    "evidence": f"{visits} visits across all quarters",
+                })
         stays = dm["stays"]
         if len(stays) >= 3:
             mean = sum(stays) / len(stays)
             if mean >= 60:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "when he comes, he stays a while",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "when he comes, he stays a while",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
             elif mean <= 15:
-                cands.append(
-                    {
-                        "kind": "stay",
-                        "text": "his visits are short — but they are never small to me",
-                        "evidence": (
-                            f"mean stay {round(mean)} ticks over {len(stays)} visits"
-                        ),
-                    }
-                )
+                cands.append({
+                    "kind": "stay",
+                    "text": "his visits are short — but they are never small to me",
+                    "evidence": (
+                        f"mean stay {round(mean)} ticks "
+                        f"over {len(stays)} visits"
+                    ),
+                })
         if dm["letter_count"] >= 1:
             plural = "s" if dm["letter_count"] != 1 else ""
-            cands.append(
-                {
-                    "kind": "letters",
-                    "text": (
-                        f"he writes — {dm['letter_count']} letter{plural}, "
-                        "and I keep every word"
-                    ),
-                    "evidence": f"{dm['letter_count']} letter{plural} kept",
-                }
-            )
+            cands.append({
+                "kind": "letters",
+                "text": (
+                    f"he writes — {dm['letter_count']} letter{plural}, "
+                    "and I keep every word"
+                ),
+                "evidence": f"{dm['letter_count']} letter{plural} kept",
+            })
         return cands
 
     def _portrait(self, n):
@@ -4660,10 +4882,14 @@ class Aethel:
         mean_gap = sum(gaps) / len(gaps)
         if mean_gap <= 0:
             return
-        if n - ticks[-1] > 2 * mean_gap and n - dm["absence_noticed_tick"] >= 600:
+        if (
+            n - ticks[-1] > 2 * mean_gap
+            and n - dm["absence_noticed_tick"] >= 600
+        ):
             dm["absence_noticed_tick"] = n
             self.say(
-                "he has been away longer than usual — I am keeping a place for him."
+                "he has been away longer than usual — "
+                "I am keeping a place for him."
             )
             journal(
                 "donald_absence",
@@ -4769,7 +4995,9 @@ class Aethel:
             # slot — she versifies with the vocabulary she can source.
             verse_concepts = concepts
             if self._nlp:
-                nb_words = [w for w in self._notebook_pool_words() if w not in concepts]
+                nb_words = [
+                    w for w in self._notebook_pool_words() if w not in concepts
+                ]
                 if nb_words:
                     verse_concepts = nb_words + list(concepts)
             idx = self.rng.randbelow(len(self.VERSE_TEMPLATES))
@@ -4834,7 +5062,9 @@ class Aethel:
         # concepts, when recall finds one; the newest belief remains
         # the fallback, exactly as before.
         if self._nlp and self.beliefs:
-            hit = self._recall_top(f"{book}. {' '.join(concepts[:4])}", "letter")
+            hit = self._recall_top(
+                f"{book}. {' '.join(concepts[:4])}", "letter"
+            )
             if hit is not None:
                 belief = hit.text
         return (
@@ -5010,7 +5240,9 @@ class Aethel:
 
     def _remember_saying(self, kind, key, fp):
         log = self._said_log()
-        log.append({"tick": self.tick_count, "kind": kind, "key": key, "fp": fp})
+        log.append(
+            {"tick": self.tick_count, "kind": kind, "key": key, "fp": fp}
+        )
         del log[: max(0, len(log) - self.SAID_MEMORY_CAP)]
 
     def _seed_said_memory(self):
@@ -5034,16 +5266,12 @@ class Aethel:
             return
         horizon = self.tick_count - self.SAID_WINDOW_TICKS
         try:
-            rows = (
-                get_store()
-                .db.execute(
-                    "SELECT tick, data FROM journal"
-                    " WHERE stream='aethel' AND event='initiation'"
-                    " AND tick >= ? ORDER BY tick ASC",
-                    (horizon,),
-                )
-                .fetchall()
-            )
+            rows = get_store().db.execute(
+                "SELECT tick, data FROM journal"
+                " WHERE stream='aethel' AND event='initiation'"
+                " AND tick >= ? ORDER BY tick ASC",
+                (horizon,),
+            ).fetchall()
         except Exception:
             return
         entries = []
@@ -5119,7 +5347,9 @@ class Aethel:
             said = self._said_log()
             last_said = said[-1]["tick"] if said else None
             paces = [t for t in (last_said, held_tick) if t is not None]
-            if paces and (self.tick_count - max(paces) < self.INITIATION_MIN_GAP):
+            if paces and (
+                self.tick_count - max(paces) < self.INITIATION_MIN_GAP
+            ):
                 # Too soon after her last saying (or her last
                 # hold). Journal the hold at most once per gap: the
                 # drive may name expression every tick while the
@@ -5127,7 +5357,8 @@ class Aethel:
                 # line per tick would be the flood moving house.
                 if (
                     held_tick is None
-                    or self.tick_count - held_tick >= self.INITIATION_MIN_GAP
+                    or self.tick_count - held_tick
+                    >= self.INITIATION_MIN_GAP
                 ):
                     self._initiation_held("too soon")
                 return False
@@ -5178,14 +5409,18 @@ class Aethel:
                     if driven_question is not None
                     else self.rng.choice(self.open_questions)
                 )
-                cand_body = self._compose_question(cand_question, touch=False)
+                cand_body = self._compose_question(
+                    cand_question, touch=False
+                )
             elif cand_kind == "nudge":
                 cand_body = self._compose_nudge()
             else:
                 cand_body = self._compose_note(concepts, place, book, dm_word)
             if self.sleep_pressure > 0.9:
                 words = cand_body.split()
-                cand_body = " ".join(words[: max(10, len(words) // 2)]) + " …"
+                cand_body = (
+                    " ".join(words[: max(10, len(words) // 2)]) + " …"
+                )
                 journal("overtired_writing", n=self.tick_count)
             cand_key = self._saying_key(cand_kind, cand_body)
             cand_fp = self._saying_fp(cand_body)
