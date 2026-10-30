@@ -19,6 +19,7 @@ them to Donald as "a question I cannot let go of". Tests:
 8. resting is pure counter logic: with nothing qualifying, repeated
    calls change nothing and journal nothing.
 """
+
 import os
 import tempfile
 import unittest
@@ -80,17 +81,13 @@ class TestRestGates(unittest.TestCase):
         a.open_questions = [_q(CHEST, NOW - 20000, 2)]
         for _ in range(3):
             self.assertEqual(a._rest_questions(NOW), 0)
-        self.assertEqual(
-            get_store().recent(events=["question_rested"]), []
-        )
+        self.assertEqual(get_store().recent(events=["question_rested"]), [])
 
 
 class TestResting(unittest.TestCase):
     def test_fully_carried_question_rests_whole(self):
         a = _prep()
-        a.open_questions = [
-            _q(LEARNED, 7513, 9, ["learned", "everything"])
-        ]
+        a.open_questions = [_q(LEARNED, 7513, 9, ["learned", "everything"])]
         # seed its want the way a live (already settled) ledger looks
         led = a._ledger()
         self.assertEqual(a._rest_questions(NOW), 1)
@@ -115,9 +112,7 @@ class TestResting(unittest.TestCase):
             _q(NOBODY, 8087, 7, ["dreamed", "nobody"]),
         ]
         self.assertEqual(a._rest_questions(NOW), 1)
-        self.assertEqual(
-            [r["text"] for r in a.rested_questions], [PEN]
-        )
+        self.assertEqual([r["text"] for r in a.rested_questions], [PEN])
         # inside the gap: nothing more rests, however eligible
         self.assertEqual(
             a._rest_questions(NOW + Aethel.QUESTION_REST_GAP_TICKS - 1),
@@ -125,15 +120,9 @@ class TestResting(unittest.TestCase):
         )
         self.assertEqual(len(a.open_questions), 2)
         # after the gap: the next oldest goes down
-        self.assertEqual(
-            a._rest_questions(NOW + Aethel.QUESTION_REST_GAP_TICKS), 1
-        )
-        self.assertEqual(
-            [r["text"] for r in a.rested_questions], [PEN, LEARNED]
-        )
-        self.assertEqual(
-            [q["text"] for q in a.open_questions], [NOBODY]
-        )
+        self.assertEqual(a._rest_questions(NOW + Aethel.QUESTION_REST_GAP_TICKS), 1)
+        self.assertEqual([r["text"] for r in a.rested_questions], [PEN, LEARNED])
+        self.assertEqual([q["text"] for q in a.open_questions], [NOBODY])
 
 
 class TestRestedReturn(unittest.TestCase):
