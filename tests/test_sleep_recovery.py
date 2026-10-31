@@ -34,6 +34,7 @@ Isolation: partial instances in the test_dormant_recovery pattern
 (journal stubbed, dream/say/save stubbed, jitter pinned or cached) —
 the live diary is never opened and no seeded stream is drawn.
 """
+
 import unittest
 
 import aethel_pkg.organism as org
