@@ -24,6 +24,13 @@ Sleep was examined and deliberately left alone: sleep is
 duration-bounded and always ends, so it can lower her INTO dormancy
 but cannot hold her there once dormancy itself guarantees recovery.
 
+v0.47 SUPERSESSION: that last call was re-read against the numbers
+and reversed. Erosion beats sleep's flat restore at EVERY strain's
+steady burn, not just at a pinned worst case, so the sleep-drains,
+dormancy-refills sawtooth was live behavior, and sleep now carries
+the same guarantee (tests/test_sleep_recovery.py). The dormant
+guarantee pinned below is unchanged.
+
 Isolation: partial instances (the test_breathing pattern) with
 journal/save/reflect/_update_needs stubbed — the live diary is
 never opened, and no seeded stream is drawn except Briar's cached
