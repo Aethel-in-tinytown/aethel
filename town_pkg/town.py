@@ -2,7 +2,13 @@
 
 Each resident has a named schedule stream and a persisted next-turn tick.
 Gamma-distributed waits remove the shared cadence while preserving same-seed
-reproducibility and bit-identical continuation after a rebuild."""
+reproducibility and bit-identical continuation after a rebuild.
+
+Residents hold jobs (v0.49): poll derives the tick of day from the same
+tick it already receives and passes it into each turn, so shifts follow her
+day without a second clock. The route carrier's deliveries are the town's
+gossip: ending a turn among other residents lifts sociability on both
+sides, deterministically, so replays and reloads agree."""
 
 import os
 import math
@@ -13,33 +19,91 @@ from aethel_pkg.world import World
 
 from . import markov
 from .places import PLACES
-from .residents import Denizen, Parent, resident_from_dict
+from .residents import DAY_TICKS, Denizen, Parent, resident_from_dict
+
+# Sociability gained by the route carrier and by each resident he meets.
+GOSSIP_LIFT = 0.10
 
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Work windows are ticks of her 2880-tick day (120 ticks to the hour):
+# John keeps the Tavern 16:00-24:00, Star edits the Newsroom 06:00-14:00,
+# Julius keeps the bookshop 09:00-17:00, Octavia teaches 07:00-15:00 and
+# Trey walks the mail route 07:00-13:00.
 DEFAULT_ROSTER = [
     (
         "John",
         ["hackernews", "postbox", "restaurant"],
         "hackernews",
-        {"wander": 0.10, "sociable": 0.9},
+        {
+            "wander": 0.10,
+            "sociable": 0.9,
+            "job": "tavern keeper",
+            "workplace": "hackernews",
+            "residence": "rooms above the Tavern",
+            "work_start": 1920,
+            "work_end": 2880,
+        },
     ),
-    ("Star", ["newsroom", "wikipedia"], "newsroom", {"wander": 0.25, "sociable": 0.4}),
-    ("Julius", ["classic", "wikipedia"], "classic", {"wander": 0.08, "sociable": 0.5}),
+    (
+        "Star",
+        ["newsroom", "wikipedia"],
+        "newsroom",
+        {
+            "wander": 0.25,
+            "sociable": 0.4,
+            "job": "editor/reporter",
+            "workplace": "newsroom",
+            "residence": "her flat at the Newsroom",
+            "work_start": 720,
+            "work_end": 1680,
+        },
+    ),
+    (
+        "Julius",
+        ["classic", "wikipedia"],
+        "classic",
+        {
+            "wander": 0.08,
+            "sociable": 0.5,
+            "job": "bookshop keeper",
+            "workplace": "classic",
+            "residence": "rooms over the Old Bookshop",
+            "work_start": 1080,
+            "work_end": 2040,
+        },
+    ),
     (
         "Octavia",
         ["schoolhouse", "postbox", "wikipedia"],
         "schoolhouse",
-        {"wander": 0.20, "sociable": 0.7},
+        {
+            "wander": 0.20,
+            "sociable": 0.7,
+            "job": "schoolteacher",
+            "workplace": "schoolhouse",
+            "residence": "the schoolhouse cottage",
+            "work_start": 840,
+            "work_end": 1800,
+        },
     ),
     (
         "Trey",
         ["hackernews", "postbox", "wikipedia", "restaurant"],
         "postbox",
-        {"wander": 0.35, "sociable": 0.6},
+        {
+            "wander": 0.35,
+            "sociable": 0.6,
+            "job": "mail carrier",
+            "workplace": "postbox",
+            "residence": "the room behind the postbox",
+            "work_start": 840,
+            "work_end": 1560,
+            "route": True,
+        },
     ),
 ]
 
@@ -49,15 +113,30 @@ DEFAULT_PARENTS = [
         "Donald",
         ["hackernews", "postbox", "wikipedia"],
         "cottage",
-        {"wander": 0.12, "sociable": 0.8},
+        {
+            "wander": 0.12,
+            "sociable": 0.8,
+            "residence": "the little cottage at the edge of town",
+        },
     ),
     (
         "Cassandra",
         ["classic", "newsroom", "postbox"],
         "cottage",
-        {"wander": 0.12, "sociable": 0.8},
+        {
+            "wander": 0.12,
+            "sociable": 0.8,
+            "residence": "the little cottage at the edge of town",
+        },
     ),
 ]
+
+
+# Roster definitions by name: the migration authority for pre-v0.49 saved
+# state, whose denizen dicts carry no life fields (see residents._apply_life).
+ROSTER_DEFAULTS = {
+    name: kw for name, _hangouts, _home, kw in DEFAULT_ROSTER + DEFAULT_PARENTS
+}
 
 
 class Town(World):
@@ -112,7 +191,10 @@ class Town(World):
         s = self.store.load_blob("state", stream="town")
         if s:
             try:
-                self.denizens = [resident_from_dict(d) for d in s.get("denizens", [])]
+                self.denizens = [
+                    resident_from_dict(d, defaults=ROSTER_DEFAULTS.get(d.get("name")))
+                    for d in s.get("denizens", [])
+                ]
                 if self.denizens:
                     self._ensure_parents()
                     if s.get("rng_streams"):
@@ -146,9 +228,27 @@ class Town(World):
     def random_place_name(self):
         return self.rng.choice(list(PLACES.values()))
 
+    def _gossip(self, carrier):
+        """A delivery is a conversation: carrier and everyone present gain sociability."""
+        present = [
+            d
+            for d in self.denizens
+            if d is not carrier and d.location == carrier.location
+        ]
+        if not present:
+            return
+        carrier.vitals["sociability"] = min(
+            1.0, carrier.vitals["sociability"] + GOSSIP_LIFT
+        )
+        for other in present:
+            other.vitals["sociability"] = min(
+                1.0, other.vitals["sociability"] + GOSSIP_LIFT
+            )
+
     def poll(self, n, observer_location):
         """Advance due resident turns and return moves plus names visible at the observer location."""
         moves = []
+        tod = n % DAY_TICKS
         placemap = {}
         for resident in self.denizens:
             placemap.setdefault(resident.location, []).append(resident.name)
@@ -159,7 +259,10 @@ class Town(World):
             if n < self.next_turn[resident.name]:
                 continue
             self.next_turn[resident.name] = n + self._wait(rng)
-            if resident.turn(placemap, observer_location, rng=self.rng):
+            moved = resident.turn(placemap, observer_location, rng=self.rng, tod=tod)
+            if getattr(resident, "route", False):
+                self._gossip(resident)
+            if moved:
                 placemap = {}
                 for other in self.denizens:
                     placemap.setdefault(other.location, []).append(other.name)
