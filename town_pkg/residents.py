@@ -58,6 +58,9 @@ class Denizen:
         work_start=None,
         work_end=None,
         route=False,
+        work2_start=None,
+        work2_end=None,
+        work2_place=None,
     ):
         self.name = name
         self.hangouts = hangouts
@@ -70,6 +73,13 @@ class Denizen:
         self.work_start = work_start
         self.work_end = work_end
         self.route = route
+        # A second work window at a second place (v0.52: Trey keeps the
+        # Hotel desk in the evening alongside his morning mail route).
+        # One window stays the default; every consumer below resolves
+        # the active window instead of assuming there is only one.
+        self.work2_start = work2_start
+        self.work2_end = work2_end
+        self.work2_place = work2_place
         self.location = home
         self.vitals = {"energy": 0.8, "hunger": 0.7, "sociability": 0.6}
         # Phase 2 (v0.50): an attached ResidentMind, or None. A denizen
@@ -93,6 +103,9 @@ class Denizen:
             "work_start": self.work_start,
             "work_end": self.work_end,
             "route": self.route,
+            "work2_start": self.work2_start,
+            "work2_end": self.work2_end,
+            "work2_place": self.work2_place,
             "location": self.location,
             "vitals": self.vitals,
         }
@@ -116,22 +129,59 @@ class Denizen:
         return o
 
     def on_shift(self, tod):
-        """True when a tick of day falls inside the resident's work window.
+        """True when a tick of day falls inside either work window.
 
         Jobless residents (the parents, standalone fixtures) are never on
         shift, and a missing tick means the caller has no clock to give:
         both read as off shift, which is the pre-v0.49 behavior.
         """
-        return (
-            tod is not None
-            and self.workplace is not None
+        return self.workplace_at(tod) is not None
+
+    def workplace_at(self, tod):
+        """The place whose window holds this tick, or None off shift.
+
+        The second window is checked first: it is the exception, and a
+        resident standing in it should never be read as standing in the
+        first. A missing tick or missing window reads as no place.
+        """
+        if tod is None:
+            return None
+        if (
+            self.work2_place is not None
+            and self.work2_start is not None
+            and self.work2_end is not None
+            and self.work2_start <= tod < self.work2_end
+        ):
+            return self.work2_place
+        if (
+            self.workplace is not None
             and self.work_start is not None
             and self.work_end is not None
             and self.work_start <= tod < self.work_end
-        )
+        ):
+            return self.workplace
+        return None
 
-    def work_options(self, placemap):
-        """Destinations while on shift: the route, or the workplace anchor."""
+    def workplace_now(self, tod):
+        """Where this resident's work pulls them at this tick: the
+        active window's place on shift, and off shift their main post,
+        which for a two-window resident is the second window's place
+        (Trey's Hotel desk, not his route base)."""
+        return self.workplace_at(tod) or self.work2_place or self.workplace
+
+    def work_options(self, placemap, tod=None):
+        """Destinations while on shift: the route, the second window's
+        desk anchor, or the workplace anchor."""
+        if (
+            self.work2_place is not None
+            and self.workplace_at(tod) == self.work2_place
+        ):
+            if self.location == self.work2_place:
+                return [(self.work2_place, 1.0)]
+            return [
+                (self.work2_place, WORK_ANCHOR),
+                (self.location, 1.0 - WORK_ANCHOR),
+            ]
         if self.route:
             options = [(self.workplace, ROUTE_HOME_WEIGHT)]
             for place, names in placemap.items():
@@ -154,7 +204,7 @@ class Denizen:
             if low == "hunger":
                 return [("hackernews", 1.0)]
             if self.on_shift(tod):
-                return self.work_options(placemap)
+                return self.work_options(placemap, tod=tod)
 
             options = [
                 (place, float(len(names)))
@@ -166,7 +216,7 @@ class Denizen:
             return options or [(self.location, 1.0)]
 
         if self.on_shift(tod):
-            return self.work_options(placemap)
+            return self.work_options(placemap, tod=tod)
 
         options = [(self.location, 1.0 - self.wander)]
         share = self.wander / len(self.hangouts) if self.hangouts else 0.0
@@ -225,6 +275,9 @@ def _apply_life(o, d, defaults):
     o.work_start = _life_value(d, defaults, "work_start", None)
     o.work_end = _life_value(d, defaults, "work_end", None)
     o.route = bool(_life_value(d, defaults, "route", False))
+    o.work2_start = _life_value(d, defaults, "work2_start", None)
+    o.work2_end = _life_value(d, defaults, "work2_end", None)
+    o.work2_place = _life_value(d, defaults, "work2_place", None)
     # D6 place migration (v0.50): the Post Office became a real place and
     # Trey's job and home anchor there, superseding the provisional
     # postbox labels saved by v0.49. Idempotent: the new values never
@@ -236,6 +289,18 @@ def _apply_life(o, d, defaults):
             o.workplace = "postoffice"
         if o.residence == "the room behind the postbox":
             o.residence = "the rooms above the Post Office"
+        # Hotel migration (v0.52, Donald's ruling 2026-11-01): Trey
+        # lives at the Hotel and keeps its desk as his main job; the
+        # Post Office stays his route base and a real place, just not
+        # his home. Runs after the D6 block so a v0.49 dict chains
+        # postbox -> postoffice -> hotel in one load. Idempotent the
+        # same way: the new values never match the old ones.
+        if o.home == "postoffice":
+            o.home = "hotel"
+        if o.residence == "the rooms above the Post Office":
+            o.residence = "the keeper's rooms at the Hotel"
+        if o.job == "mail carrier":
+            o.job = "hotel keeper and mail carrier"
 
 
 class Parent(Denizen):

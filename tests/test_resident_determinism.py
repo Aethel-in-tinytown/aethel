@@ -98,7 +98,12 @@ class TestGoldenVectors(unittest.TestCase):
         # later, a different curiosity variant, score 0.73). Same
         # resident, same need, same verdict; the same-seed and restart
         # properties above are the gate, this pin is the tripwire.
-        self.assertEqual(first, ("julius", 50, "accepted", 0.73, "curiosity"))
+        # v0.52 reviewed diff: the ambient pools landing means the
+        # first judged impulse in a fresh town is now John's ambient
+        # urge at tick 2 (need None marks the color loop), ahead of
+        # any need-born judgment. That is the version working as
+        # designed; the pin moves, the properties above still gate.
+        self.assertEqual(first, ("john", 2, "accepted", 0.67, None))
 
 
 class TestPerformanceGate(unittest.TestCase):

@@ -35,7 +35,9 @@ def _now_iso():
 # Work windows are ticks of her 2880-tick day (120 ticks to the hour):
 # John keeps the Tavern 16:00-24:00, Star edits the Newsroom 06:00-14:00,
 # Julius keeps the bookshop 09:00-17:00, Octavia teaches 07:00-15:00 and
-# Trey walks the mail route 07:00-13:00.
+# Trey walks the mail route 07:00-13:00, then keeps the Hotel desk
+# 16:00-21:00 (v0.52: the Hotel is his home and main job, the route his
+# part-time second, per Donald's ruling).
 DEFAULT_ROSTER = [
     (
         "John",
@@ -96,16 +98,19 @@ DEFAULT_ROSTER = [
     (
         "Trey",
         ["hackernews", "postbox", "wikipedia", "restaurant"],
-        "postoffice",
+        "hotel",
         {
             "wander": 0.35,
             "sociable": 0.6,
-            "job": "mail carrier",
+            "job": "hotel keeper and mail carrier",
             "workplace": "postoffice",
-            "residence": "the rooms above the Post Office",
+            "residence": "the keeper's rooms at the Hotel",
             "work_start": 840,
             "work_end": 1560,
             "route": True,
+            "work2_start": 1920,
+            "work2_end": 2520,
+            "work2_place": "hotel",
         },
     ),
 ]

@@ -29,6 +29,19 @@ Draws come only from the mind's own named stream ("mind:<Name>"), so the
 town movement stream and the schedule streams keep their exact v0.49
 draw sequences. No wall clock, no random module, no network, no file I/O
 beyond the shared Store.
+
+v0.52 completes the record: each mind journals its resident's bio once
+at first load, keeps per-day counters beside the lifetime ones (shifts
+worked, company kept, the day's lowest vital, judged and accepted
+impulses measured against day-start bases), and at the day boundary
+writes one day_page row from those counters before they reset (spec
+7.4: the payload keys are the v0.53 switcher's fixed contract, so they
+are named exactly and tested exactly). The personal ambient pools land
+as data in the same version, so the color loop that was live but
+dormant in v0.51 starts firing. Friday wrote this version after a
+supervised Anton draft was reviewed and bounced at the gate (payload
+keys, company tally, per-day resets); the close-at-rollover shape is
+his, the contract discipline is the review's.
 """
 
 from datetime import datetime, timezone
@@ -43,7 +56,9 @@ BRAIN_VERSION = 1
 LEGACY_VITALS = ("energy", "hunger", "sociability")
 ALL_VITALS = LEGACY_VITALS + ("purpose", "curiosity")
 # Events that are the record's spine: never suppressed by the daily cap.
-EXEMPT_EVENTS = ("shift_start", "shift_end", "impulse", "impulse_felt")
+EXEMPT_EVENTS = (
+    "shift_start", "shift_end", "impulse", "impulse_felt", "day_page", "bio",
+)
 
 
 def _now_iso():
@@ -81,6 +96,18 @@ def _fresh_state():
         "threshold_ticks": {},
         "impulses_judged": 0,
         "impulses_accepted": 0,
+        # Day page counters (v0.52): reset at every day rollover, after
+        # _close_day has read them. Judged and accepted impulses are
+        # lifetime counters, so the day's counts are measured against
+        # bases snapshotted at the rollover.
+        "day_shifts": 0,
+        "day_company_events": 0,
+        "day_company_counts": {},
+        "day_lowest_vital": None,
+        "day_lowest_value": None,
+        "day_base_judged": 0,
+        "day_base_accepted": 0,
+        "bio_written": False,
     }
 
 
@@ -101,6 +128,13 @@ class ResidentMind:
         self._steered_tick = None
         self._pending_impulse = None
         self._turn_impulse_event = None
+        # Transient, like the three above: the lifetime impulse
+        # counters as they stood when this turn's steering began.
+        # _close_day reads them on a rollover turn, because a judgment
+        # made during the boundary turn itself belongs to the day now
+        # opening, not the day the page is closing.
+        self._pre_judged = None
+        self._pre_accepted = None
 
     @classmethod
     def from_state(cls, denizen, rng, store, state, scorer=None):
@@ -112,6 +146,13 @@ class ResidentMind:
             for key, default in fresh.items():
                 if key in state:
                     mind.state[key] = state[key]
+            # v0.52 migration: a pre-v0.52 state has lifetime impulse
+            # counters but no day bases; base the first v0.52 day on
+            # the lifetime counts so its page counts only new judging.
+            if "day_base_judged" not in state:
+                mind.state["day_base_judged"] = mind.state["impulses_judged"]
+            if "day_base_accepted" not in state:
+                mind.state["day_base_accepted"] = mind.state["impulses_accepted"]
             saved_vitals = state.get("vitals") or {}
             for key, default in fresh["vitals"].items():
                 if key in saved_vitals:
@@ -147,9 +188,33 @@ class ResidentMind:
         st = self.state
         day = n // DAY_TICKS
         if st["journal_day"] != day:
+            # The day page is written from the closing day's counters
+            # BEFORE anything resets (spec 7.4); the write itself is
+            # cap-exempt and its own count is wiped by the reset, so a
+            # page never inflates the day it opens. The journal_day -1
+            # case is not a closing day at all: it is the mind's first
+            # turn ever, and its bases stay where initialization (or
+            # the v0.52 migration in from_state) put them, because the
+            # turn that triggered this transition may already have
+            # judged an impulse that belongs to the day now opening.
+            if st["journal_day"] >= 0:
+                self._close_day(n)
+                st["day_base_judged"] = st["impulses_judged"]
+                st["day_base_accepted"] = st["impulses_accepted"]
             st["journal_day"] = day
             st["journal_count"] = 0
             st["journal_dropped"] = 0
+            st["day_shifts"] = 0
+            st["day_company_events"] = 0
+            st["day_company_counts"] = {}
+            st["day_lowest_vital"] = None
+            st["day_lowest_value"] = None
+        if not st["bio_written"]:
+            # Who this resident is, stated once at the head of their
+            # v0.52 record (spec 7.4): roster data, journaled verbatim.
+            bio = md.BIOS.get(d.name)
+            if bio and self._journal(n, "bio", text=bio):
+                st["bio_written"] = True
         self._extend_vitals(tod)
         self._shift_events(n, tod)
         self._stance_event(n)
@@ -160,6 +225,8 @@ class ResidentMind:
         else:
             payload = self._impulse_step(n, tod)
         self._turn_impulse_event = None
+        self._pre_judged = None
+        self._pre_accepted = None
         st["mood"] = max(-1.0, min(1.0, st["mood"] * 0.995))
         st["mood_band"] = (
             "low" if st["mood"] < -0.33 else "high" if st["mood"] > 0.33 else "mid"
@@ -175,11 +242,19 @@ class ResidentMind:
             mv["purpose"] = max(
                 md.PURPOSE_FLOOR, mv["purpose"] - md.PURPOSE_DECAY
             )
-        if d.on_shift(tod) and d.location == d.workplace:
+        if d.on_shift(tod) and d.location == d.workplace_at(tod):
             mv["purpose"] = min(1.0, mv["purpose"] + md.PURPOSE_WORKPLACE_GAIN)
         mv["curiosity"] = max(0.0, mv["curiosity"] - md.CURIOSITY_DECAY)
         if d.location in md.INFO_PLACES:
             mv["curiosity"] = min(1.0, mv["curiosity"] + md.CURIOSITY_PLACE_GAIN)
+        # Day page: the day's lowest vital, sampled after decay so the
+        # page reports the thinnest moment the resident actually felt.
+        st = self.state
+        v = self.vitals()
+        lowest = min(ALL_VITALS, key=lambda k: v[k])
+        if st["day_lowest_value"] is None or v[lowest] < st["day_lowest_value"]:
+            st["day_lowest_vital"] = lowest
+            st["day_lowest_value"] = v[lowest]
 
     def _shift_events(self, n, tod):
         d = self.denizen
@@ -194,7 +269,15 @@ class ResidentMind:
                     1.0, mv["purpose"] + md.PURPOSE_SHIFT_COMPLETE_GAIN
                 )
                 self._arm_reoffer()
-            self._journal(n, event, place=d.workplace)
+                self.state["day_shifts"] += 1
+            # The place a shift belongs to is the window's own place:
+            # a resident with two windows (Trey, v0.52) starts and ends
+            # each at its own post. At an end boundary the current tick
+            # is already off shift, so look one tick back.
+            place = d.workplace_at(tod)
+            if place is None and tod:
+                place = d.workplace_at(tod - 1)
+            self._journal(n, event, place=place or d.workplace)
 
     def _arm_reoffer(self):
         """At shift end, a deferred urge re-offers once (spec 6.1):
@@ -257,7 +340,67 @@ class ResidentMind:
             if last is None or n - last >= md.COMPANY_JOURNAL_COOLDOWN_TICKS:
                 self.state["last_company_tick"] = n
                 self.state["mood"] += 0.03
+                # Day page tallies ride the same gate as the line
+                # itself (v0.52): the page counts the company the
+                # journal counted, so the two records can never argue.
+                self.state["day_company_events"] += 1
+                counts = self.state["day_company_counts"]
+                for name in names:
+                    counts[name] = counts.get(name, 0) + 1
                 self._journal(n, "company", names=names)
+
+    def _close_day(self, n):
+        """Write the closing day's page (spec 7.4) from its counters.
+
+        Called at the rollover, before the reset: the payload keys are
+        the v0.53 switcher's fixed contract, and events_written is the
+        day's journal count as the cap kept it, not a second counter
+        that could drift from the stream it describes. top_company is
+        the day's most frequent company by the journal's own tally,
+        ties broken by who was counted first."""
+        st = self.state
+        top = None
+        best = 0
+        for name, count in st["day_company_counts"].items():
+            if count > best:
+                best = count
+                top = name
+        # A shift whose window ends exactly at the day boundary is
+        # complete the moment the day closes, but its shift_end flip
+        # is only processed later in this same turn, after the page
+        # has to be written. Credit it here, from the schedule state
+        # the closing day ended in, or a 16:00-24:00 keeper would
+        # report zero shifts for a day he fully worked.
+        shifts = st["day_shifts"]
+        d = self.denizen
+        if st["was_on_shift"] and (
+            d.work_end == DAY_TICKS or d.work2_end == DAY_TICKS
+        ):
+            shifts += 1
+        judged_now = (
+            self._pre_judged
+            if self._pre_judged is not None
+            else st["impulses_judged"]
+        )
+        accepted_now = (
+            self._pre_accepted
+            if self._pre_accepted is not None
+            else st["impulses_accepted"]
+        )
+        self._journal(
+            n,
+            "day_page",
+            day=st["journal_day"],
+            shifts_worked=shifts,
+            impulses_judged=judged_now - st["day_base_judged"],
+            impulses_accepted=accepted_now - st["day_base_accepted"],
+            top_company=top,
+            company_events=st["day_company_events"],
+            lowest_vital=st["day_lowest_vital"],
+            lowest_vital_value=st["day_lowest_value"],
+            events_written=st["journal_count"],
+            journal_dropped=st["journal_dropped"],
+        )
 
     # -- impulses ------------------------------------------------------
 
@@ -295,6 +438,8 @@ class ResidentMind:
         the resident actually went.
         """
         self._steered_tick = n
+        self._pre_judged = self.state["impulses_judged"]
+        self._pre_accepted = self.state["impulses_accepted"]
         return self._consider_impulse(n, tod, options, override_active)
 
     def _consider_impulse(self, n, tod, options, override_active):
@@ -371,7 +516,7 @@ class ResidentMind:
         if dest == "home":
             dest = d.home
         elif dest == "workplace":
-            dest = d.workplace
+            dest = d.workplace_now(tod)
         event = {
             "text": text,
             "need": lowest,
@@ -383,7 +528,7 @@ class ResidentMind:
         if verdict != "accepted" or dest is None:
             self._pending_impulse = event
             return options
-        if d.on_shift(tod) and dest != d.workplace:
+        if d.on_shift(tod) and dest != d.workplace_at(tod):
             # The job is senior (spec 6.1): accepted and journaled
             # now, effects already applied, and the destination
             # re-offers once at shift end if the need is still lowest.
@@ -406,9 +551,9 @@ class ResidentMind:
         return self._insert(options, dest)
 
     def _consider_ambient(self, n):
-        """The color loop (spec 3.4). Live but dormant in v0.51: the
-        personal pools are v0.52 content, so AMBIENT_URGES is empty
-        and this returns at the pool check until they land."""
+        """The color loop (spec 3.4): live since v0.51, content since
+        v0.52 filled AMBIENT_URGES. Returns at the pool check for any
+        resident without a pool, which is now nobody on the roster."""
         st = self.state
         pool = md.AMBIENT_URGES.get(self.denizen.name)
         if not pool:
@@ -505,6 +650,26 @@ class ResidentMind:
     # -- journal -------------------------------------------------------
 
     def _line(self, event, fields):
+        if event == "day_page":
+            # The day page formats its own counted facts (spec 7.4);
+            # a missing company or vital reads as the plain words for
+            # nobody and nothing, never as a fabricated name or number.
+            template = self.rng.choice(list(md.TEMPLATES["day_page"]))
+            lowest_value = fields.get("lowest_vital_value")
+            return template.format(
+                day=fields.get("day"),
+                shifts_worked=fields.get("shifts_worked"),
+                impulses_judged=fields.get("impulses_judged"),
+                impulses_accepted=fields.get("impulses_accepted"),
+                top_company=fields.get("top_company") or "no one in particular",
+                company_events=fields.get("company_events"),
+                lowest_vital=fields.get("lowest_vital") or "nothing",
+                lowest_vital_value=(
+                    "%.2f" % lowest_value if lowest_value is not None else "n/a"
+                ),
+                events_written=fields.get("events_written"),
+                journal_dropped=fields.get("journal_dropped"),
+            )
         if event == "stance":
             pool = md.STANCE_LINES[fields["stance"]]
         elif event == "threshold":

@@ -13,10 +13,11 @@ a pass; that quirk is hers and deliberately not inherited).
 
 Need-born urge texts are mechanical, written against the voices' actual
 virtue vocabularies so a council can have an opinion about them. The
-personal ambient pools are different content: they ship with the bios in
-v0.52 after Donald's approval pass, so they do not exist here yet. The
-ambient mechanism (cadence, judging, journaling) lands with steering in
-v0.51 and reads AMBIENT_URGES below; with the pools empty it is inert.
+personal ambient pools are different content: written in each resident's
+own voice against their own council's vocabulary, approved by Donald as
+a rough draft on 2026-11-01, and shipped with the bios in v0.52. The
+ambient mechanism (cadence, judging, journaling) landed with steering in
+v0.51 and reads AMBIENT_URGES below.
 """
 
 # Exact keys of aethel_pkg.config.AXIOMS; a test pins every name.
@@ -125,11 +126,74 @@ NEED_EFFECTS = {
     "curiosity": {"curiosity": 0.10},
 }
 
-# Personal ambient urge pools, per resident. Empty in v0.51: the pools
-# are content in each resident's voice and ship with the bios in v0.52
-# after Donald's approval pass (see the module docstring). The loop
-# that reads this table is live; with no rows it never fires.
-AMBIENT_URGES = {}
+# Personal ambient urge pools, per resident (v0.52, Donald's approval
+# pass 2026-11-01): content in each resident's voice, every line written
+# against its council's actual virtue and vice vocabularies so the
+# three voices can have an opinion about it. The last line of each pool
+# is a deliberate temptation carrying a vice word: refusal is character
+# too, and a pool where everything passes would be a pool nobody
+# believes. Ambient urges never move the resident and never change a
+# vital (see minds._consider_ambient).
+AMBIENT_URGES = {
+    "John": (
+        "I could stay a little past close and listen to whoever is still nursing a drink; nobody should carry a hard day home alone.",
+        "I should learn the new keeper at the Restaurant's name properly and help him feel this town is fair.",
+        "I want to share the good bottle with the whole room on a slow night, for the benefit of everyone's wellbeing.",
+        "I should observe the room before I open and accept whatever mood walks in; that is the duty of a keeper.",
+        "I could trust the town to behave and take my full break upstairs for once, to rest and endure the long shift better.",
+        "I could deceive the late crowd with a watered pour and call it house custom.",
+    ),
+    "Star": (
+        "I should examine the town's favorite rumor before I print a word of it; I want to know what is true.",
+        "I could question the council minutes everyone else accepts and follow the reason where it goes.",
+        "I want to learn the Library's oldest shelf by heart; wisdom is the only scoop that keeps.",
+        "A bold front page would be effective, but a prudent editor checks the order of the facts twice.",
+        "I should keep my sources secure and my foresight longer than the story; that is necessary in my trade.",
+        "I could assume the rumor is true and print it before anyone can question it.",
+    ),
+    "Julius": (
+        "I should put the shelves back in order before I close; order is a form of truth.",
+        "I want to examine the damaged binding in the back room and learn what age does to a book.",
+        "I could question whether the shop needs new stock at all, and accept the quiet season with discipline.",
+        "I should share the reading room with whoever wanders in; it is my duty, and wisdom grows when it is not kept.",
+        "I want to know the whole of one author's life this month, and reason my way through it slowly.",
+        "I could keep the rarest book behind the counter for myself alone, where my appetite can reach it whenever it likes.",
+    ),
+    "Octavia": (
+        "I should listen to the quiet child at the back first; care begins where the noise is not.",
+        "I want to serve the schoolroom early and set out the books in peace before the day begins.",
+        "I could ask the children one honest question and examine my own teaching by their answers.",
+        "I should be patient with the slow reader and trust that nurture outlasts hurry.",
+        "I want to learn one true thing about each of my students this week and know them better for it.",
+        "I could coerce the lazy ones with extra drills until they fear the schoolroom bell.",
+    ),
+    "Trey": (
+        "I could walk the long way by the lane and enjoy it; a simple route, honestly taken, is enough.",
+        "I should share the town's news as I go; it helps many and costs me nothing but breath.",
+        "I want to be bold and claim the good chair by the fire; a prudent man keeps his rest secure before the route.",
+        "I could sort the post in order before I sleep; foresight makes the morning effective.",
+        "I should learn who is new in town and what they need; the mail is only half the delivery.",
+        "I could pretend I never saw the heavy parcel and leave it for tomorrow's route.",
+    ),
+}
+
+# Who each resident is (v0.52, spec appendix as approved in principle
+# under D7, Donald's approval pass 2026-11-01; Trey's rewritten the same
+# day to his hotel ruling). Written as the record states it today: jobs,
+# hours, homes and temperaments as the roster and the spec fix them,
+# with no invented past and no interiority the journals have not shown.
+# Each bio is journaled once on its resident's stream at first v0.52
+# load (minds.after_turn) and kept here as roster data for the pages
+# that will display it (v0.53). The parents carry no bio: Donald and
+# Cassandra are bounded visitors in her world (D3), not residents with
+# pages to fill.
+BIOS = {
+    "John": "John keeps the Tavern, and the town's evenings run through his room. He works the long shift, four in the afternoon until midnight, and sleeps in the rooms above the Tavern, close enough that the place is never really out of his care. Of everyone in town he is the most sociable by a wide margin, and the least given to wandering: his hangouts are the Tavern itself, the postbox, and the Restaurant, and mostly he is simply where he belongs, behind his own bar. If the town has a front room, it is John's, and he is in it.",
+    "Star": "Star runs the Newsroom, where she is editor and reporter both, on the early shift: six in the morning until two in the afternoon. She lives in her flat at the Newsroom, so the paper's hours and her hours are the same hours. She is the most private of the residents, the one least likely to be found in a crowd, and when she does go out it is usually to the Library. Her work brings her the town's news before anyone else has it, which may be why she seems to need so little of its company.",
+    "Julius": "Julius keeps the Old Bookshop, nine to five, and lives in the rooms over it, the same rooms Aethel knows from across the landing of her own life in town. He is the least restless person in the town by far: his world is the bookshop and the Library, and he is content for it to stay that size. His sociability is the middle of the road, neither John's warmth nor Star's reserve. The bookshop keeps its hours because Julius keeps his, and the town's oldest room runs on the town's steadiest pair of hands.",
+    "Octavia": "Octavia teaches at the little Schoolhouse, seven in the morning until three in the afternoon, and lives in the schoolhouse cottage. She is warm in the way teachers are, the second most sociable of the residents after John, and her rounds outside the classroom take her to the postbox and the Library as well as her own schoolroom. Her day starts earlier than almost anyone's and is spent among the town's children, which makes her the resident whose work is most entirely other people, and she seems built for exactly that.",
+    "Trey": "Trey runs the Hotel, and lives there too: the town's roof for travelers is his roof as well, and the desk by the door is his post as much as any counter in town. But he is the most mobile person in town anyway, because most mornings he is out on the mail route, seven until one, a part-time job that suits a man who cannot sit still. His rounds and his hangouts together cover the Tavern, the postbox, the Library, and the Restaurant, and no resident covers more ground. A delivery from Trey is a conversation whether you planned one or not; the town's news travels at the speed of his route, and so does its gossip. Then the route ends, and he comes home to the Hotel.",
+}
 
 # Journal discipline (spec section 5.3, Donald's D9 cap ruling).
 JOURNAL_DAILY_CAP = 25
@@ -248,6 +312,19 @@ TEMPLATES = {
     "overheard": (
         "I heard {names} turn an urge over: {text}",
         "Passing by, I caught {names} weighing an urge: {text}",
+    ),
+    # The bio line is the bio itself, verbatim (v0.52): who this
+    # resident is, stated once at the head of their record.
+    "bio": ("{text}",),
+    # The day page (v0.52, spec 7.4): one factual summary line per
+    # resident per day, composed from the day's own counters at the
+    # day boundary. Every placeholder is a counted fact about the day
+    # that just closed; nothing here reaches for a fact the counters
+    # did not record.
+    "day_page": (
+        "Day {day} closed: {shifts_worked} shifts worked, {impulses_judged} urges judged and {impulses_accepted} let stand. I wrote {events_written} lines and let {journal_dropped} go.",
+        "Day {day} closed: I kept company {company_events} times, most often with {top_company}. The lowest I ran was {lowest_vital} at {lowest_vital_value}.",
+        "Day {day} closed: {events_written} lines written, {journal_dropped} dropped. {impulses_judged} urges came up; {impulses_accepted} I acted on. Thinnest I got was {lowest_vital}, {lowest_vital_value}.",
     ),
 }
 

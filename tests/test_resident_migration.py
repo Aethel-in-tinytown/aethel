@@ -56,11 +56,16 @@ class TestV49BlobLoads(unittest.TestCase):
         for name in ("Donald", "Cassandra"):
             self.assertIsNone(by_name(self.town, name).mind, name)
 
-    def test_trey_migrates_to_the_post_office(self):
+    def test_trey_migrates_through_to_the_hotel(self):
+        # Reviewed diff (v0.52): this test pinned the v0.50 end state
+        # (the Post Office). Donald's 2026-11-01 hotel ruling chains
+        # the migration onward in the same load: home and residence
+        # land at the Hotel, the workplace stays the Post Office,
+        # which remains his route base.
         trey = by_name(self.town, "Trey")
-        self.assertEqual(trey.home, "postoffice")
+        self.assertEqual(trey.home, "hotel")
         self.assertEqual(trey.workplace, "postoffice")
-        self.assertEqual(trey.residence, "the rooms above the Post Office")
+        self.assertEqual(trey.residence, "the keeper's rooms at the Hotel")
 
 
 class TestRollbackShape(unittest.TestCase):
