@@ -43,6 +43,126 @@ from .temperament import pack as temperament_pack
 from .world import World
 
 
+# v0.48 (reworked): the copyeditor's rule tables. Only function
+# words may have a duplicated token collapsed: "the the" is a
+# stutter, "very very" is emphasis, and the pass is forbidden to
+# decide which she meant. Contractions are spelled out only for the
+# unambiguous lowercase forms her outbox census actually produced;
+# a form with a legitimate reading of its own ("ill", "id") is
+# never touched.
+_POLISH_FUNCTION_WORDS = (
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "at",
+    "is", "was", "for", "by", "with", "as",
+)
+_POLISH_CONTRACTIONS = {
+    "dont": "don't",
+    "cant": "can't",
+    "wont": "won't",
+    "didnt": "didn't",
+    "doesnt": "doesn't",
+    "isnt": "isn't",
+    "arent": "aren't",
+    "wasnt": "wasn't",
+    "werent": "weren't",
+    "couldnt": "couldn't",
+    "shouldnt": "shouldn't",
+    "wouldnt": "wouldn't",
+    "im": "I'm",
+    "ive": "I've",
+}
+_POLISH_DUP_RE = re.compile(
+    r"\b(" + "|".join(_POLISH_FUNCTION_WORDS) + r") \1\b", re.IGNORECASE
+)
+_POLISH_CONTRACTION_RE = re.compile(
+    r"\b(" + "|".join(_POLISH_CONTRACTIONS) + r")\b"
+)
+_POLISH_SIGNATURE_RE = re.compile(
+    r"^(?P<body>.*)(?P<sig>\n\n— [^\n]*)$", re.DOTALL
+)
+
+
+def _polish_rules(text):
+    """One deterministic copyedit pass over a piece she wrote (v0.48).
+
+    Donald's original design sent her postbox pieces through a local
+    model with a humanize-and-correct brief. The live endpoint test
+    failed twice on 2026-11-01: the model answered at a healthy rate
+    but spent thousands of tokens reasoning about the letter before
+    editing it, blowing the time ceiling both times. Donald then
+    ruled the rework himself: rules, offline, inside her own code.
+    The trade is named, not hidden: rules fix mechanics and never
+    supply a missing word the way the model brief promised, and in
+    exchange the pass is instant and returns the same output on
+    every run, which is the property her restart-fidelity
+    architecture values most. The rule set targets the mechanical
+    defect classes her writing shows: spacing slips, lowercase
+    sentence starts, duplicated function words, missing terminal
+    punctuation, plus their close cousins (space before punctuation,
+    a comma with no following space, the lowercase pronoun and its
+    common contractions). Run over her last 40 real letters at ship
+    time, the pass changed 5, all of them capitalizations, invented
+    no word, and was idempotent on all 40.
+
+    The signature block (an em-dash name line after a paragraph
+    break) is split off first and reattached untouched, so the
+    terminal punctuation rule lands on her last sentence, never
+    after her name. Every rule is a fixed point: polishing polished
+    text changes nothing, and apart from a collapsed duplicate, the
+    word multiset of the output is the word multiset of the input.
+    The pass invents nothing.
+    """
+    sig = ""
+    body = text
+    m = _POLISH_SIGNATURE_RE.match(text)
+    if m and m.group("body").strip():
+        body, sig = m.group("body"), m.group("sig")
+
+    # Spacing: collapse runs of spaces and tabs; newlines are hers.
+    body = re.sub(r"[ \t]+", " ", body)
+    body = re.sub(r" ([,.!?;:])", r"\1", body)
+    # A comma takes a following space before a letter, and never
+    # inside a number: "1,000" is one token, not two clauses.
+    body = re.sub(r",(?=[A-Za-z])", ", ", body)
+    # The pronoun and its contractions, before capitalization so a
+    # sentence-initial "dont" still lands as "Don't".
+    body = re.sub(r"\bi\b", "I", body)
+    body = _POLISH_CONTRACTION_RE.sub(
+        lambda match: _POLISH_CONTRACTIONS[match.group(1)], body
+    )
+    # A duplicated function word collapses to one; looped so a
+    # triple stutter settles in a single pass.
+    while True:
+        collapsed = _POLISH_DUP_RE.sub(lambda match: match.group(1), body)
+        if collapsed == body:
+            break
+        body = collapsed
+    # Sentence starts: the opening letter, a paragraph opening, and
+    # the letter after sentence punctuation. The lookbehind refuses
+    # the last dot of an ellipsis, where her trailing off stays
+    # lowercase on purpose.
+    body = re.sub(
+        r"^([ \t]*)([a-z])",
+        lambda match: match.group(1) + match.group(2).upper(),
+        body,
+    )
+    body = re.sub(
+        r"(\n\n)([a-z])",
+        lambda match: match.group(1) + match.group(2).upper(),
+        body,
+    )
+    body = re.sub(
+        r"(?<!\.)([.!?]) ([a-z])",
+        lambda match: match.group(1) + " " + match.group(2).upper(),
+        body,
+    )
+    # Terminal punctuation: a letter or digit at the end of the body
+    # takes a period. Anything already punctuated stands.
+    stripped = body.rstrip()
+    if stripped and stripped[-1].isalnum():
+        body = stripped + "."
+    return body + sig
+
+
 class Aethel:
     """Maintain bodily drives, learned concepts, relationships and autobiographical state."""
 
@@ -5651,6 +5771,48 @@ class Aethel:
         )
         print(f"[initiation held] {reason}", flush=True)
 
+    def _polish_voice(self, text):
+        """One copyedit pass over a piece she has written (v0.48).
+
+        The pass runs at sealing, inside express() only, and nowhere
+        else: dreams, narration and every other journaled text are
+        hers unmediated, and this method is never called on them.
+
+        Placement is the reconciliation with v0.29. The letter is
+        still read against the rules she owns exactly as before, and
+        everything she learns from writing (the notebook, the
+        co-occurrence graph, the said key and fingerprint) is taken
+        from the words as she composed them, before this pass runs.
+        The journal's `text` field likewise keeps her raw words; when
+        a polish lands, the event additionally carries `raw_text` and
+        `polished_text` side by side, so her diary remains the record
+        of what she actually produced. Only the reader's sealed copy
+        is smoothed. Rejected alternative: polishing at composition,
+        which would teach her notebook and her said-memory the
+        copyeditor's words and file them as hers, the v0.29 wrong,
+        done quietly.
+
+        The editor itself is _polish_rules, a pure function of the
+        text (see its docstring for why rules replaced the model).
+        Fail-open, always: any surprise inside the rule pass returns
+        None, and None means "seal her words exactly as she wrote
+        them." A pass that changes nothing also returns None, so a
+        clean letter journals no polish event and gains no fields.
+
+        Returns the polished text, or None.
+        """
+        if not config.VOICE_POLISH_ENABLED:
+            return None
+        if not text or not text.strip():
+            return None
+        try:
+            polished = _polish_rules(text)
+        except Exception:
+            return None
+        if not polished or polished == text:
+            return None
+        return polished
+
     def express(self):
         """Write an eligible outreach piece, journal its driver and ease the corresponding wants.
 
@@ -5793,11 +5955,32 @@ class Aethel:
         # covered by this same hook.
         self._cooc_learn_generated(body, via=kind)
 
+        # v0.48: the sealed copy, and only the sealed copy, may pass
+        # through the voice polish (see _polish_voice for why it sits
+        # here and nowhere earlier). Everything above this line — the
+        # grammar ledger's reading, the notebook, the co-occurrence
+        # graph, the said key and fingerprint computed from them —
+        # worked on the words as she composed them, and the journal
+        # below keeps those words in `text` untouched. When the
+        # polish lands, the event carries both texts; when it does
+        # not (disabled, no change, or a rule surprise), the event
+        # and the file are exactly what v0.47 wrote.
+        sealed_body = body
+        polish_fields = {}
+        polished = self._polish_voice(body)
+        if polished is not None:
+            sealed_body = polished
+            polish_fields = {
+                "raw_text": body[:300],
+                "polished_text": polished[:300],
+                "polished": True,
+            }
+
         fname = f"{self.tick_count:06d}_{kind}.txt"
         path = os.path.join(config.outbox_dir(), fname)
         header = f"Aethel — {kind} — {now_iso()} (tick {self.tick_count})\n\n"
         with open(path, "w") as f:
-            f.write(header + body)
+            f.write(header + sealed_body)
         self.outbox_count += 1
         self.initiation_log.append(
             {"tick": self.tick_count, "kind": kind, "file": fname}
@@ -5826,6 +6009,7 @@ class Aethel:
             want_label=driver["label"] if driver else None,
             want_ache=round(driver["ache"], 3) if driver else 0.0,
             said_key=key,
+            **polish_fields,
         )
 
         led = self._ledger()

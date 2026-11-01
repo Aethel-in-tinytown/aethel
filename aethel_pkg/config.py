@@ -17,6 +17,19 @@ MEMORY_CAP = 12
 # reads sane. While False, annotations journal and nothing else moves.
 TONE_EFFECTS_ENABLED = False
 
+# v0.48: voice polish, a deterministic rule-based copyedit over the
+# pieces she writes at the postbox, applied at sealing (see
+# Aethel._polish_voice and _polish_rules). Ships DISABLED, on the
+# TONE_EFFECTS precedent: the code path is present but inert until
+# Donald flips the switch (the env flag below, or this constant).
+# While disabled, express() is bit-identical to v0.47: no journal
+# field changes, and the outbox file carries her words exactly as
+# she composed them. The original design called a local model
+# endpoint; the live test failed on latency (the model reasoned for
+# thousands of tokens before it edited), and Donald ruled the rules
+# rework on 2026-11-01, so no endpoint constants remain.
+VOICE_POLISH_ENABLED = os.environ.get("AETHEL_VOICE_POLISH", "") == "1"
+
 
 def base_dir():
     return os.environ.get("AETHEL_HOME", os.path.expanduser("~/workspace/aethel"))
