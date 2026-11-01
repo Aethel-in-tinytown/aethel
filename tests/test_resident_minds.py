@@ -1,9 +1,11 @@
-"""Release gates for v0.50: the residents' lite brains, in shadow.
+"""Release gates for the residents' lite brains (v0.50 shadow, v0.51 live).
 
 Minds extend the vitals, judge need-born impulses with three-voice
-councils, and journal, but never steer and never touch the legacy three
-vitals: a shadow town must move bit-identically to the town without
-minds. The parents never get minds (D3). Rosters are Donald's D2 ruling.
+councils, and journal. From v0.51 they also steer, inside the
+seniority rules, and an accepted impulse may move the legacy vital
+that bore it. The parents never get minds (D3). Rosters are Donald's
+D2 ruling. The v0.50 shadow-equality gate is retired in TestShadowEquality
+below, with its reasoning recorded there.
 """
 
 import unittest
@@ -57,13 +59,25 @@ class TestRosters(unittest.TestCase):
 
 class TestExtendedVitals(unittest.TestCase):
     def test_purpose_grows_at_work_on_shift(self):
+        # v0.51 tuning: decay pauses on shift (the v0.50 soak showed
+        # purpose draining to 0.0 across a day when decay ran against
+        # the workplace gain), so the on-shift delta is the gain alone.
         town = fresh_town(minds=True)
         john = by_name(town, "John")
         john.location = "hackernews"
         before = john.mind.state["vitals"]["purpose"]
         john.mind.after_turn(2000, 2000, [])
         after = john.mind.state["vitals"]["purpose"]
-        self.assertAlmostEqual(after - before, -md.PURPOSE_DECAY + md.PURPOSE_WORKPLACE_GAIN)
+        self.assertAlmostEqual(after - before, md.PURPOSE_WORKPLACE_GAIN)
+
+    def test_purpose_decays_off_shift(self):
+        town = fresh_town(minds=True)
+        john = by_name(town, "John")
+        john.location = "hackernews"
+        before = john.mind.state["vitals"]["purpose"]
+        john.mind.after_turn(100, 100, [])
+        after = john.mind.state["vitals"]["purpose"]
+        self.assertAlmostEqual(after - before, -md.PURPOSE_DECAY)
 
     def test_curiosity_grows_at_information_places(self):
         town = fresh_town(minds=True)
@@ -145,21 +159,153 @@ class TestImpulseLoop(unittest.TestCase):
 
 
 class TestShadowEquality(unittest.TestCase):
-    def test_shadow_town_moves_bit_identically(self):
+    """The v0.50 gate (a minds town moves bit-identically to a plain
+    town) is retired by v0.51 on purpose: steering exists to change
+    movement, and the spec sanctions exactly that change. What must
+    survive is the draw discipline: minds may change WHICH option a
+    draw lands on, never how many draws the town and schedule streams
+    make, so a divergence is always attributable to an insertion."""
+
+    def test_steering_keeps_town_stream_draws(self):
         plain = fresh_town(seed=7, minds=False)
-        shadow = fresh_town(seed=7, minds=True)
+        steered = fresh_town(seed=7, minds=True)
         for n in range(3000):
-            a = plain.poll(n, "postbox")
-            b = shadow.poll(n, "postbox")
-            self.assertEqual(a, b, f"poll return diverged at tick {n}")
-            for d_plain, d_shadow in zip(plain.denizens, shadow.denizens):
-                self.assertEqual(d_plain.location, d_shadow.location, (n, d_plain.name))
-                self.assertEqual(d_plain.vitals, d_shadow.vitals, (n, d_plain.name))
+            plain.poll(n, "postbox")
+            steered.poll(n, "postbox")
         plain_streams = {k: v for k, v in plain.streams.dump().items()}
-        shadow_streams = {
-            k: v for k, v in shadow.streams.dump().items() if not k.startswith("mind:")
+        steered_streams = {
+            k: v for k, v in steered.streams.dump().items() if not k.startswith("mind:")
         }
-        self.assertEqual(plain_streams, shadow_streams)
+        self.assertEqual(plain_streams, steered_streams)
+        judged = sum(
+            d.mind.state["impulses_judged"] for d in steered.denizens if d.mind
+        )
+        self.assertGreater(judged, 0)
+
+
+class ApprovingScorer:
+    """A council that always approves, so steering tests pin the
+    machinery, not the vocabulary."""
+
+    def moral_score(self, text, roster):
+        return 0.9, "fake council: approves"
+
+
+def steer_mind(name="Julius", workplace="classic", start=840, end=1560):
+    d = Denizen(
+        name,
+        ["classic", "wikipedia"],
+        "classic",
+        job="bookshop keeper",
+        workplace=workplace,
+        work_start=start,
+        work_end=end,
+    )
+    mind = ResidentMind(d, SplitMix64(5), Store(":memory:"), scorer=ApprovingScorer())
+    d.mind = mind
+    d.vitals = {"energy": 0.9, "hunger": 0.9, "sociability": 0.9}
+    mind.state["vitals"] = {"purpose": 0.9, "curiosity": 0.9}
+    return d, mind
+
+
+class TestSteering(unittest.TestCase):
+    def test_accepted_urge_merges_into_existing_row(self):
+        d, mind = steer_mind()
+        mind.state["vitals"]["purpose"] = 0.20
+        options = mind.steer(5000, 100, [("classic", 0.92), ("wikipedia", 0.08)], False)
+        self.assertEqual(
+            dict(options), {"classic": 0.92 + md.IMPULSE_WEIGHT, "wikipedia": 0.08}
+        )
+        payload = mind.after_turn(5000, 100, [])
+        self.assertEqual(payload["verdict"], "accepted")
+        self.assertIs(payload["went"], True)
+
+    def test_accepted_urge_appends_new_destination(self):
+        d, mind = steer_mind()
+        mind.state["vitals"]["curiosity"] = 0.20
+        options = mind.steer(5000, 100, [("classic", 0.8), ("postoffice", 0.2)], False)
+        self.assertEqual(options[-1], ("wikipedia", md.IMPULSE_WEIGHT))
+
+    def test_legacy_lowest_is_felt_never_judged(self):
+        d, mind = steer_mind()
+        d.vitals["hunger"] = 0.20
+        base = [("classic", 1.0)]
+        options = mind.steer(5000, 100, list(base), True)
+        self.assertEqual(options, base)
+        self.assertEqual(mind.state["impulses_judged"], 0)
+        self.assertEqual(mind.state["felt_due_tick"], 5000 + md.FELT_COOLDOWN_TICKS)
+        self.assertEqual(mind.state["impulse_due_tick"], 0)
+        rows = mind.store.recent(stream=mind.stream, limit=10)
+        self.assertTrue(any(e == "impulse_felt" for _t, e, _p in rows))
+
+    def test_extended_urge_judged_under_override_but_held(self):
+        d, mind = steer_mind()
+        d.vitals["hunger"] = 0.30
+        mind.state["vitals"]["curiosity"] = 0.20
+        base = [("hackernews", 1.0)]
+        options = mind.steer(5000, 100, list(base), True)
+        self.assertEqual(options, base)
+        self.assertEqual(mind.state["impulses_judged"], 1)
+        payload = mind.after_turn(5000, 100, [])
+        self.assertTrue(payload["held_by_override"])
+        self.assertIs(payload["went"], False)
+
+    def test_on_shift_deferral_arms_and_reoffers(self):
+        d, mind = steer_mind()
+        mind.state["vitals"]["curiosity"] = 0.20
+        base = [("classic", 1.0)]
+        options = mind.steer(5000, 1000, list(base), False)
+        self.assertEqual(options, base)
+        self.assertIsNotNone(mind.state["deferred"])
+        self.assertFalse(mind.state["deferred"]["armed"])
+        mind.after_turn(5000, 1000, [])
+        mind.state["impulse_due_tick"] = 10**9
+        mind.after_turn(6000, 1560, [])
+        self.assertTrue(mind.state["deferred"]["armed"])
+        options = mind.steer(7000, 1700, [("classic", 0.8)], False)
+        self.assertIn(("wikipedia", md.IMPULSE_WEIGHT), options)
+        d.location = "wikipedia"
+        payload = mind.after_turn(7000, 1700, [])
+        self.assertTrue(payload["reoffer"])
+        self.assertIs(payload["went"], True)
+        self.assertEqual(mind.state["impulses_judged"], 1)
+
+    def test_felt_does_not_consume_the_judged_cooldown(self):
+        mind = lone_mind("John")
+        d = mind.denizen
+        d.vitals = {"energy": 0.9, "hunger": 0.20, "sociability": 0.9}
+        mind.after_turn(1000, 1000, [])
+        self.assertEqual(mind.state["impulses_judged"], 0)
+        self.assertEqual(mind.state["impulse_due_tick"], 0)
+        d.vitals["hunger"] = 0.9
+        mind.state["vitals"]["purpose"] = 0.20
+        mind.after_turn(1100, 1100, [])
+        self.assertEqual(mind.state["impulses_judged"], 1)
+
+    def test_company_journals_only_when_it_grows(self):
+        mind = lone_mind("John")
+
+        def company_rows():
+            rows = mind.store.recent(stream=mind.stream, limit=50)
+            return [p for _t, e, p in rows if e == "company"]
+
+        mind._company_event(10, ["Star"])
+        mind._company_event(20, ["Star"])
+        self.assertEqual(len(company_rows()), 1)
+        # Growth inside the journal cooldown is still not a new line.
+        mind._company_event(30, ["Star", "Trey"])
+        self.assertEqual(len(company_rows()), 1)
+        mind._company_event(300, ["Star", "Trey", "Julius"])
+        self.assertEqual(len(company_rows()), 2)
+
+    def test_overheard_lands_on_treys_stream(self):
+        mind = lone_mind("Trey")
+        mind.note_overheard(42, "Star", "I want to browse the shelves")
+        rows = mind.store.recent(stream="resident:trey", limit=5)
+        hits = [p for _t, e, p in rows if e == "overheard"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["names"], ["Star"])
+        self.assertIn("Star", hits[0]["line"])
 
 
 if __name__ == "__main__":

@@ -286,7 +286,9 @@ class Town(World):
             if n < self.next_turn[resident.name]:
                 continue
             self.next_turn[resident.name] = n + self._wait(rng)
-            moved = resident.turn(placemap, observer_location, rng=self.rng, tod=tod)
+            moved = resident.turn(
+                placemap, observer_location, rng=self.rng, tod=tod, n=n
+            )
             if getattr(resident, "route", False):
                 self._gossip(resident)
             mind = getattr(resident, "mind", None)
@@ -296,7 +298,21 @@ class Town(World):
                     for other in self.denizens
                     if other is not resident and other.location == resident.location
                 ]
-                mind.after_turn(n, tod, present)
+                payload = mind.after_turn(n, tod, present)
+                if payload and resident.name != "Trey":
+                    # Gossip grows a memory (spec 5.2): an impulse
+                    # judged in Trey's presence lands on his stream.
+                    trey = next(
+                        (d for d in self.denizens if d.name == "Trey"), None
+                    )
+                    if (
+                        trey is not None
+                        and trey.mind is not None
+                        and trey.location == resident.location
+                    ):
+                        trey.mind.note_overheard(
+                            n, resident.name, payload["text"]
+                        )
             if moved:
                 placemap = {}
                 for other in self.denizens:

@@ -14,7 +14,9 @@ a pass; that quirk is hers and deliberately not inherited).
 Need-born urge texts are mechanical, written against the voices' actual
 virtue vocabularies so a council can have an opinion about them. The
 personal ambient pools are different content: they ship with the bios in
-v0.52 after Donald's approval pass, so they do not exist here yet.
+v0.52 after Donald's approval pass, so they do not exist here yet. The
+ambient mechanism (cadence, judging, journaling) lands with steering in
+v0.51 and reads AMBIENT_URGES below; with the pools empty it is inert.
 """
 
 # Exact keys of aethel_pkg.config.AXIOMS; a test pins every name.
@@ -47,12 +49,43 @@ ROSTERS = {
 }
 
 # The two extended vitals (D4). The legacy three keep their v0.49 rates
-# inside Denizen.turn and are never touched by the mind.
-PURPOSE_DECAY = 0.01
-PURPOSE_WORKPLACE_GAIN = 0.02
+# inside Denizen.turn; the mind reads them live and, from v0.51, an
+# accepted impulse may move the one that bore it (NEED_EFFECTS below).
+# v0.51 tuning (staging soaks, 2026-11-01): purpose first decayed on
+# every turn against a workplace-only gain and drained to 0.0 for most
+# residents (the v0.50 soak flagged the phase-dependent snapshot).
+# Pausing decay on shift alone did not fix the equilibrium (first
+# v0.51 soak: purpose still at 0.00 at most samples for four of five
+# residents), because at ~960 resident turns a day a 0.01 off-shift
+# decay outweighs any trickle gain. The rates now follow the legacy
+# vitals' shape instead: a slow decay that runs only off shift, a
+# modest per-turn workplace gain, and a lump on shift completion, so
+# purpose tops up across a shift, drains slowly across the off hours,
+# and reaches the floor only late in a long off-shift stretch.
+PURPOSE_DECAY = 0.004
+PURPOSE_WORKPLACE_GAIN = 0.01
+PURPOSE_SHIFT_COMPLETE_GAIN = 0.10
+# Purpose decays only down to this floor: these are people with homes
+# and habits, and "my days feel like mine" bottoms out at adrift, not
+# at void. The second v0.51 soak showed the unfloored decay zeroing
+# every resident overnight (a ~640-turn off-shift stretch drains 2.56
+# at 0.004 a turn), so any snapshot read after mid-evening showed 0.00
+# regardless of the day the resident had actually had.
+PURPOSE_FLOOR = 0.15
 CURIOSITY_DECAY = 0.015
 CURIOSITY_PLACE_GAIN = 0.03
 INFO_PLACES = ("wikipedia", "newsroom", "university")
+
+# Journal pacing for the chatter-prone lines (v0.51 soak fixes): a
+# stance flip, a company arrival, or a vital crossing a band is
+# texture, not news, and in a seven-person town each can fire hundreds
+# of times a day (the legacy vitals oscillate across their bands on
+# every crash and restore). Each is journaled at most once per this
+# many ticks per resident; the daily cap and its dropped counter
+# remain the backstop, not the mechanism.
+STANCE_JOURNAL_COOLDOWN_TICKS = 240
+COMPANY_JOURNAL_COOLDOWN_TICKS = 240
+THRESHOLD_JOURNAL_COOLDOWN_TICKS = 240
 
 # A need-born impulse is considered when the lowest of the five vitals
 # falls under this line, the same 0.35 her town overrides already use.
@@ -60,6 +93,43 @@ NEED_THRESHOLD = 0.35
 # Minimum ticks between judged impulses per resident: at most 12 a day.
 IMPULSE_COOLDOWN_TICKS = 240
 PASS_MARK = 0.5
+
+# Steering (v0.51, spec section 6.1): an accepted urge inserts its
+# destination into the turn's options at this weight, the single
+# strongest ordinary influence on where a resident goes, short of a
+# command. The stay-put weight it competes with is 1 - wander.
+IMPULSE_WEIGHT = 1.5
+# Felt-and-deferred urges (a survival override owns the turn) run on
+# their own, longer cooldown and never consume the judged-impulse
+# cooldown. The v0.50 soak recorded 34-36 felt lines per resident over
+# 3 days on the shared cooldown, crowding the journal and starving the
+# judged loop; at 960 a resident journals at most 3 felt lines a day.
+FELT_COOLDOWN_TICKS = 960
+# Ambient color loop cadence (spec section 3.4): one ambient draw is
+# considered per resident per this many ticks, and only when no
+# need-born impulse fired inside the judged cooldown window.
+AMBIENT_COOLDOWN_TICKS = 480
+
+# What an accepted need-born impulse does to the vitals, keyed by the
+# need that bore it (spec section 3.4: small deltas, data-keyed).
+# v0.50 applied +0.10 to the bearing vital only when it was one of the
+# extended two, because a legacy vital feeds the survival overrides and
+# shadow mode had to leave movement untouched. Steering lifts that
+# restriction: the bearing vital gains the same small amount whichever
+# three it belongs to. Ambient impulses never carry effects.
+NEED_EFFECTS = {
+    "energy": {"energy": 0.10},
+    "hunger": {"hunger": 0.10},
+    "sociability": {"sociability": 0.10},
+    "purpose": {"purpose": 0.10},
+    "curiosity": {"curiosity": 0.10},
+}
+
+# Personal ambient urge pools, per resident. Empty in v0.51: the pools
+# are content in each resident's voice and ship with the bios in v0.52
+# after Donald's approval pass (see the module docstring). The loop
+# that reads this table is live; with no rows it never fires.
+AMBIENT_URGES = {}
 
 # Journal discipline (spec section 5.3, Donald's D9 cap ruling).
 JOURNAL_DAILY_CAP = 25
@@ -174,6 +244,10 @@ TEMPLATES = {
     "impulse_felt": (
         "An urge rose in me, but my body had first claim: {text}",
         "I felt an urge and set it aside; needs come first: {text}",
+    ),
+    "overheard": (
+        "I heard {names} turn an urge over: {text}",
+        "Passing by, I caught {names} weighing an urge: {text}",
     ),
 }
 

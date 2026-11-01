@@ -173,14 +173,22 @@ class Denizen:
         options.extend((h, share) for h in self.hangouts if h != self.location)
         return options
 
-    def turn(self, placemap, aethel_loc, rng=None, tod=None):
+    def turn(self, placemap, aethel_loc, rng=None, tod=None, n=None):
         """Advance needs and choose a destination; parent visits take precedence when active."""
         rng = rng or _fallback
         v = self.vitals
         v["energy"] = max(0.0, v["energy"] - 0.03)
         v["hunger"] = max(0.0, v["hunger"] - 0.04)
         v["sociability"] = max(0.0, v["sociability"] - 0.05)
-        options, weights = zip(*self.transition_options(placemap, aethel_loc, tod=tod))
+        options = self.transition_options(placemap, aethel_loc, tod=tod)
+        if self.mind is not None and n is not None:
+            # v0.51: the mind steers between the base options and the
+            # draw (spec section 2.4). The override flag is the same
+            # arithmetic transition_options just applied: any legacy
+            # vital under 0.35 means the body owns this turn.
+            override = min(v.values()) < 0.35
+            options = self.mind.steer(n, tod, list(options), override)
+        options, weights = zip(*options)
         dest = rng.weighted_choice(list(options), list(weights))
         if dest and dest != self.location:
             self.location = dest
@@ -253,7 +261,7 @@ class Parent(Denizen):
         )
         return d
 
-    def turn(self, placemap, aethel_loc, rng=None, tod=None):
+    def turn(self, placemap, aethel_loc, rng=None, tod=None, n=None):
         """Advance needs and choose a destination; parent visits take precedence when active."""
         rng = rng or _fallback
         if self.visiting > 0:
@@ -278,7 +286,7 @@ class Parent(Denizen):
             self.visiting = rng.randint(3, 5)
             self.location = aethel_loc
             return True
-        return super().turn(placemap, aethel_loc, rng=rng, tod=tod)
+        return super().turn(placemap, aethel_loc, rng=rng, tod=tod, n=n)
 
 
 def resident_from_dict(d, defaults=None):

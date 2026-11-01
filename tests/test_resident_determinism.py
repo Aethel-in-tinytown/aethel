@@ -93,7 +93,12 @@ class TestGoldenVectors(unittest.TestCase):
                             payload.get("need"),
                         )
                         break
-        self.assertEqual(first, ("julius", 49, "accepted", 0.75, "curiosity"))
+        # v0.51 reviewed diff: the felt-cooldown fix and the purpose
+        # tuning changed which consideration judged first (one tick
+        # later, a different curiosity variant, score 0.73). Same
+        # resident, same need, same verdict; the same-seed and restart
+        # properties above are the gate, this pin is the tripwire.
+        self.assertEqual(first, ("julius", 50, "accepted", 0.73, "curiosity"))
 
 
 class TestPerformanceGate(unittest.TestCase):
