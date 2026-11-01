@@ -17,7 +17,10 @@ from datetime import datetime, timezone
 from aethel_pkg.rng import DEFAULT_SEED, Streams
 from aethel_pkg.world import World
 
+from . import config as town_config
 from . import markov
+from .mind_data import ROSTERS
+from .minds import ResidentMind
 from .places import PLACES
 from .residents import DAY_TICKS, Denizen, Parent, resident_from_dict
 
@@ -93,13 +96,13 @@ DEFAULT_ROSTER = [
     (
         "Trey",
         ["hackernews", "postbox", "wikipedia", "restaurant"],
-        "postbox",
+        "postoffice",
         {
             "wander": 0.35,
             "sociable": 0.6,
             "job": "mail carrier",
-            "workplace": "postbox",
-            "residence": "the room behind the postbox",
+            "workplace": "postoffice",
+            "residence": "the rooms above the Post Office",
             "work_start": 840,
             "work_end": 1560,
             "route": True,
@@ -140,7 +143,7 @@ ROSTER_DEFAULTS = {
 
 
 class Town(World):
-    def __init__(self, seed=None, store=None):
+    def __init__(self, seed=None, store=None, minds_enabled=None):
         """Restore a town in its owning store, preserving the saved root seed."""
         if store is None:
             from aethel_pkg.store import Store
@@ -159,6 +162,30 @@ class Town(World):
         self.denizens = []
         self.next_turn = {}
         self.load()
+        # Phase 2 (v0.50, D8): minds attach only behind the flag. With
+        # the flag off nothing here runs: no mind objects, no mind
+        # streams, no "mind" keys in the blob, bit-identical to v0.49.
+        if minds_enabled is None:
+            minds_enabled = town_config.RESIDENT_MINDS_ENABLED
+        self.minds_enabled = bool(minds_enabled)
+        if self.minds_enabled:
+            self._attach_minds()
+
+    def _attach_minds(self):
+        """Give each roster resident (never a parent, D3) a ResidentMind.
+
+        Mind streams spawn from the town's Streams by name, so their
+        states ride the blob's rng_streams exactly like the schedule
+        streams do, and a rebuilt town continues each mind's draws."""
+        for d in self.denizens:
+            if getattr(d, "kind", "resident") != "resident":
+                continue
+            if d.name not in ROSTERS:
+                continue
+            rng = self.streams.stream("mind:" + d.name)
+            d.mind = ResidentMind.from_state(
+                d, rng, self.store, getattr(d, "mind_state", None)
+            )
 
     def parent_names(self):
         """List residents whose kind is parent."""
@@ -262,6 +289,14 @@ class Town(World):
             moved = resident.turn(placemap, observer_location, rng=self.rng, tod=tod)
             if getattr(resident, "route", False):
                 self._gossip(resident)
+            mind = getattr(resident, "mind", None)
+            if mind is not None:
+                present = [
+                    other.name
+                    for other in self.denizens
+                    if other is not resident and other.location == resident.location
+                ]
+                mind.after_turn(n, tod, present)
             if moved:
                 placemap = {}
                 for other in self.denizens:

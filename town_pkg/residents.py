@@ -72,9 +72,16 @@ class Denizen:
         self.route = route
         self.location = home
         self.vitals = {"energy": 0.8, "hunger": 0.7, "sociability": 0.6}
+        # Phase 2 (v0.50): an attached ResidentMind, or None. A denizen
+        # without a mind behaves exactly as in v0.49; the Town attaches
+        # minds only when the flag is on, and never to the parents (D3).
+        # mind_state is the raw saved dict, held between from_dict and
+        # the Town's attach step so this module never imports minds.py.
+        self.mind = None
+        self.mind_state = None
 
     def to_dict(self):
-        return {
+        d = {
             "name": self.name,
             "hangouts": self.hangouts,
             "home": self.home,
@@ -89,6 +96,9 @@ class Denizen:
             "location": self.location,
             "vitals": self.vitals,
         }
+        if self.mind is not None:
+            d["mind"] = self.mind.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, d, defaults=None):
@@ -102,6 +112,7 @@ class Denizen:
         _apply_life(o, d, defaults)
         o.location = d.get("location", o.home)
         o.vitals = d.get("vitals", o.vitals)
+        o.mind_state = d.get("mind")
         return o
 
     def on_shift(self, tod):
@@ -206,6 +217,17 @@ def _apply_life(o, d, defaults):
     o.work_start = _life_value(d, defaults, "work_start", None)
     o.work_end = _life_value(d, defaults, "work_end", None)
     o.route = bool(_life_value(d, defaults, "route", False))
+    # D6 place migration (v0.50): the Post Office became a real place and
+    # Trey's job and home anchor there, superseding the provisional
+    # postbox labels saved by v0.49. Idempotent: the new values never
+    # match the old ones, so a migrated dict passes through unchanged.
+    if o.name == "Trey":
+        if o.home == "postbox":
+            o.home = "postoffice"
+        if o.workplace == "postbox":
+            o.workplace = "postoffice"
+        if o.residence == "the room behind the postbox":
+            o.residence = "the rooms above the Post Office"
 
 
 class Parent(Denizen):
@@ -277,4 +299,6 @@ def resident_from_dict(d, defaults=None):
         o.kind = "resident"
     o.location = d.get("location", o.home)
     o.vitals = d.get("vitals", o.vitals)
+    if getattr(o, "mind_state", None) is None:
+        o.mind_state = d.get("mind")
     return o

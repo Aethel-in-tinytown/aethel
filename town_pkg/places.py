@@ -10,6 +10,7 @@ PLACES = {
     "schoolhouse": "the little Schoolhouse",
     "nightschool": "the Night School",
     "postbox": "the wooden postbox at the end of the lane",
+    "postoffice": "the Post Office",
     "home": "my rooms above the Old Bookshop",
     "cottage": "the little cottage at the edge of town",
     "hotel": "the Hotel",
@@ -25,6 +26,7 @@ DENIZEN_PLACES = [
     "university",
     "schoolhouse",
     "postbox",
+    "postoffice",
     "hotel",
     "restaurant",
 ]

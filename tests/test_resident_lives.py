@@ -148,9 +148,11 @@ class TestTreyRoute(unittest.TestCase):
             "hackernews": ["John"],
         }
 
-    def test_route_weights_postbox_and_people(self):
+    def test_route_weights_postoffice_and_people(self):
+        # v0.50 (D6): the route anchor moved from the postbox to the new
+        # Post Office place; delivery stops still weight by headcount.
         row = dict(self.trey.transition_options(self.placemap, "postbox", tod=self.mid))
-        self.assertEqual(row["postbox"], 2.0)
+        self.assertEqual(row["postoffice"], 2.0)
         self.assertEqual(max(row.values()), 2.0)
         self.assertEqual(row["classic"], 1.0)
         self.assertEqual(row["hackernews"], 1.0)

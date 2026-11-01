@@ -104,6 +104,27 @@ class Store:
         args.append(limit)
         return [(t, e, json.loads(d)) for t, e, d in self.db.execute(sql, args)]
 
+    def prune_stream(self, stream, cap):
+        """Delete a stream's oldest journal rows beyond cap; return the count.
+
+        Added for the resident streams (Donald's D9 ruling: prune on a
+        cap rather than grow forever). Existing streams never call it,
+        so her diary's retention is untouched."""
+        count = self.db.execute(
+            "SELECT COUNT(*) FROM journal WHERE stream = ?", (stream,)
+        ).fetchone()[0]
+        excess = count - cap
+        if excess <= 0:
+            return 0
+        self.db.execute(
+            "DELETE FROM journal WHERE id IN ("
+            "  SELECT id FROM journal WHERE stream = ? ORDER BY id ASC LIMIT ?)",
+            (stream, excess),
+        )
+        if not self._transaction_depth:
+            self.db.commit()
+        return excess
+
     def event_counts(self, stream="aethel", limit=ERA_WINDOW):
         """Count event types within the most recent bounded journal window."""
         return dict(
