@@ -230,18 +230,41 @@ class TestRestock(unittest.TestCase):
         "Siddhartha",
     ]
 
+    # v0.53: the shelf was extended again on this test's own
+    # precedent (Siddhartha chosen, two books behind it), so the
+    # tail pin moves a second time, openly: the v0.53 block is the
+    # tail now, with the v0.40 block directly ahead of it.
+    V053_TITLES = [
+        "The Count of Monte Cristo",
+        "Les Misérables",
+        "War and Peace",
+        "The Scarlet Letter",
+        "A Christmas Carol",
+        "The Odyssey",
+        "Little Women",
+        "The Wonderful Wizard of Oz",
+    ]
+
     def test_restock_on_shelf_behind_existing_books(self):
         titles = [s["title"] for s in config.CLASSIC_SEEDS]
-        for t in self.NEW_TITLES:
+        for t in self.NEW_TITLES + self.V053_TITLES:
             self.assertIn(t, titles)
-        # the old shelf keeps its order; the new books queue behind it
-        self.assertEqual(titles[-len(self.NEW_TITLES) :], self.NEW_TITLES)
+        # the old shelf keeps its order; each restock queues behind
+        # the one before it, newest last
+        self.assertEqual(titles[-len(self.V053_TITLES) :], self.V053_TITLES)
+        self.assertEqual(
+            titles[
+                -len(self.V053_TITLES)
+                - len(self.NEW_TITLES) : -len(self.V053_TITLES)
+            ],
+            self.NEW_TITLES,
+        )
         self.assertEqual(
             titles[:3],
             ["The Death of Ivan Ilych", "Pride and Prejudice", "Frankenstein"],
         )
         for s in config.CLASSIC_SEEDS:
-            if s["title"] in self.NEW_TITLES:
+            if s["title"] in self.NEW_TITLES + self.V053_TITLES:
                 self.assertEqual(s["kind"], "gutenberg")
                 self.assertTrue(s["url"].startswith("https://www.gutenberg.org/"))
                 self.assertTrue(s["reflection"])
