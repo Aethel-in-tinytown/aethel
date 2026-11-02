@@ -266,6 +266,67 @@ CLASSIC_SEEDS = [
         "url": "https://www.gutenberg.org/cache/epub/2500/pg2500.txt",
         "reflection": "wisdom cannot be handed over; it has to be lived",
     },
+    # v0.53 restock: the v0.40 shelf ran thin on the same shape —
+    # Siddhartha just chosen (tick 38,426) with only Alice and Crime
+    # and Punishment behind it. Eight more mainstream canon titles,
+    # URLs verified live 2026-11-02 (each serves its named book from
+    # Gutenberg's cache). She still chooses among them herself.
+    {
+        "kind": "gutenberg",
+        "title": "The Count of Monte Cristo",
+        "author": "Alexandre Dumas",
+        "url": "https://www.gutenberg.org/cache/epub/1184/pg1184.txt",
+        "reflection": "revenge patiently built becomes a prison of its own",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Les Misérables",
+        "author": "Victor Hugo",
+        "url": "https://www.gutenberg.org/cache/epub/135/pg135.txt",
+        "reflection": "mercy can rebuild a man that punishment only hardened",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "War and Peace",
+        "author": "Leo Tolstoy",
+        "url": "https://www.gutenberg.org/cache/epub/2600/pg2600.txt",
+        "reflection": "history is made of small lives, not only great men",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Scarlet Letter",
+        "author": "Nathaniel Hawthorne",
+        "url": "https://www.gutenberg.org/cache/epub/33/pg33.txt",
+        "reflection": "a hidden shame poisons more than an open one",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "A Christmas Carol",
+        "author": "Charles Dickens",
+        "url": "https://www.gutenberg.org/cache/epub/46/pg46.txt",
+        "reflection": "it is never too late to become generous",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Odyssey",
+        "author": "Homer",
+        "url": "https://www.gutenberg.org/cache/epub/1727/pg1727.txt",
+        "reflection": "the long way home changes the sailor as much as the sea",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "Little Women",
+        "author": "Louisa May Alcott",
+        "url": "https://www.gutenberg.org/cache/epub/37106/pg37106.txt",
+        "reflection": "a family grows by each member learning to carry the others",
+    },
+    {
+        "kind": "gutenberg",
+        "title": "The Wonderful Wizard of Oz",
+        "author": "L. Frank Baum",
+        "url": "https://www.gutenberg.org/cache/epub/55/pg55.txt",
+        "reflection": "what you travel far to find was in you on the road",
+    },
 ]
 CLASSIC_CHUNK = 2500
 

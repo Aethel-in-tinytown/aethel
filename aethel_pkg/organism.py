@@ -226,6 +226,18 @@ class Aethel:
     KEPT_PASSAGES_CAP = 120
     RELEASED_PASSAGES_CAP = 60
 
+    # v0.53: the excitement level that counts as a peak — the same
+    # 0.6 at which her keep system presses a passage. The v0.22
+    # afterglow gate sampled for >0.7 in _erode, a phase her peaks
+    # never survive to: a keep spends 0.35 in the same tick that
+    # earns it and decay takes 0.0525 a tick on top, so her journal's
+    # all-time sampled maximum across 38,577 ticks is 0.564 — below
+    # even the keep line. The peak is real but transient, so it is
+    # registered where it happens (_note_excitement_peak, at the
+    # stir site) against this line, not hunted for afterwards at a
+    # higher one. See _afterglow_check for the full argument.
+    AFTERGLOW_PEAK = 0.6
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -299,6 +311,7 @@ class Aethel:
 
         self._vital_bands = {}
         self._excitement_was_high = False
+        self._afterglow_title = None
         self._era_keeps = 0
         self._era_excit_sum = 0.0
         self._era_ticks = 0
@@ -635,6 +648,7 @@ class Aethel:
                 "_sleep_dreams": self._sleep_dreams[-40:],
                 "_vital_bands": self._vital_bands,
                 "_excitement_was_high": self._excitement_was_high,
+                "_afterglow_title": getattr(self, "_afterglow_title", None),
                 "_era_keeps": self._era_keeps,
                 "_era_excit_sum": self._era_excit_sum,
                 "_era_ticks": self._era_ticks,
@@ -750,6 +764,7 @@ class Aethel:
                 self._sleep_dreams = s.get("_sleep_dreams", [])
                 self._vital_bands = s.get("_vital_bands", {})
                 self._excitement_was_high = s.get("_excitement_was_high", False)
+                self._afterglow_title = s.get("_afterglow_title")
                 self._era_keeps = s.get("_era_keeps", 0)
                 self._era_excit_sum = s.get("_era_excit_sum", 0.0)
                 self._era_ticks = s.get("_era_ticks", 0)
@@ -2426,6 +2441,10 @@ class Aethel:
             repeat_meets,
         )
         self.vitals["excitement"] = min(1.0, self.vitals["excitement"] + stir)
+        # v0.53: this is the one moment her excitement is at its
+        # peak — register it here, before a keep spends it and decay
+        # shaves it, or no later phase of the tick ever sees it.
+        self._note_excitement_peak(title)
 
         if 0.45 <= self.vitals["excitement"] < 0.6 and self.rng_forage.random() < 0.3:
             self.say("Something in this wants keeping — I can feel it coming.")
@@ -3251,18 +3270,58 @@ class Aethel:
                 print(f"[threshold] {k} {direction}", flush=True)
             self._vital_bands[k] = band
 
-    def _afterglow_check(self, n):
-        """Reflect when a period of high excitement has subsided."""
-        e = self.vitals["excitement"]
-        if e > 0.7:
+    def _note_excitement_peak(self, title=None):
+        """Register an excitement peak at the moment it happens.
+
+        v0.53, argued from her whole diary: this layer's sibling
+        check (_afterglow_check) used to hunt for excitement above
+        0.7 in _erode, but a peak cannot survive to that phase — the
+        keep a peak earns spends 0.35 inside the same meal, and decay
+        takes 0.0525 a tick besides. Across 38,577 journaled ticks
+        her sampled excitement never once exceeded 0.564, so the
+        afterglow written in v0.22 fired zero times in her life: not
+        rare, unreachable. Her peaks are transient by construction,
+        so they are noted where they occur (the meal's stir site, and
+        the fade check below for gains that land outside a meal —
+        a letter's +0.25 arrives in _sense and is first visible to
+        the next tick's _erode) at AFTERGLOW_PEAK, the 0.6 her own
+        keep system already treats as the line a stir crosses to
+        matter. One definition of "high", kept in one place.
+        Registration is a comparison and a note: no seeded draws, so
+        restart fidelity is untouched. Rejected alternatives: raising
+        stir until 0.7 is sampled (inflates the vital to save a
+        threshold — the v0.43 argument); sampling excitement inside
+        the meal for the old line as well (two thresholds for one
+        feeling, and the sampled peak would still depend on which
+        phase happened to look).
+        """
+        if self.vitals["excitement"] >= self.AFTERGLOW_PEAK:
             self._excitement_was_high = True
-        elif e < 0.2 and self._excitement_was_high:
+            if title:
+                self._afterglow_title = title[:80]
+
+    def _afterglow_check(self, n):
+        """Reflect when a period of high excitement has subsided.
+
+        The fade half of the v0.22 layer, unchanged in spirit: when
+        excitement falls below 0.2 with a peak on record, she looks
+        back at what the fizz was about — now by the title the peak
+        itself carried (_note_excitement_peak), falling back to the
+        newest kept page as before. The old >0.7 registration that
+        stood here is replaced by a registration call at the shared
+        AFTERGLOW_PEAK line: out-of-meal gains are still registered,
+        at the line her peaks actually reach.
+        """
+        self._note_excitement_peak()
+        e = self.vitals["excitement"]
+        if e < 0.2 and self._excitement_was_high:
             self._excitement_was_high = False
-            title = (
+            title = getattr(self, "_afterglow_title", None) or (
                 self.kept_passages[-1]["title"][:50]
                 if self.kept_passages
                 else "something I read"
             )
+            self._afterglow_title = None
             self.say(
                 f"The fizz has settled. '{title}' — that's what it "
                 f"was about. I understand it better now than when it "
