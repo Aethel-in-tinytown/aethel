@@ -238,6 +238,18 @@ class Aethel:
     # higher one. See _afterglow_check for the full argument.
     AFTERGLOW_PEAK = 0.6
 
+    # v0.54: the fade line the afterglow has always used — below
+    # this, a peak is over and belongs to reflection. It gets a
+    # name now because teaching shares it: the window in which a
+    # stir can be taught is exactly [AFTERGLOW_FADE, the peak),
+    # bounded below by this line and above by the registered
+    # peak. One fade line for both faculties, kept in one place,
+    # like the peak line before it. And the chance a teaching
+    # impulse is acted on in a given tick, the value _teach has
+    # carried since v0.22, named for the same reason.
+    AFTERGLOW_FADE = 0.2
+    TEACH_CHANCE = 0.3
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -312,6 +324,7 @@ class Aethel:
         self._vital_bands = {}
         self._excitement_was_high = False
         self._afterglow_title = None
+        self._peak_taught = False
         self._era_keeps = 0
         self._era_excit_sum = 0.0
         self._era_ticks = 0
@@ -649,6 +662,12 @@ class Aethel:
                 "_vital_bands": self._vital_bands,
                 "_excitement_was_high": self._excitement_was_high,
                 "_afterglow_title": getattr(self, "_afterglow_title", None),
+                # v0.54: whether the current peak has been taught
+                # round-trips with the peak itself — a restart must
+                # not hand her a second telling of a stir she has
+                # already shared (restart fidelity applies to her
+                # social memory too).
+                "_peak_taught": bool(getattr(self, "_peak_taught", False)),
                 "_era_keeps": self._era_keeps,
                 "_era_excit_sum": self._era_excit_sum,
                 "_era_ticks": self._era_ticks,
@@ -765,6 +784,9 @@ class Aethel:
                 self._vital_bands = s.get("_vital_bands", {})
                 self._excitement_was_high = s.get("_excitement_was_high", False)
                 self._afterglow_title = s.get("_afterglow_title")
+                # v0.54: a pre-teaching life has taught nothing,
+                # which is the truth — her journal holds no `told`.
+                self._peak_taught = bool(s.get("_peak_taught", False))
                 self._era_keeps = s.get("_era_keeps", 0)
                 self._era_excit_sum = s.get("_era_excit_sum", 0.0)
                 self._era_ticks = s.get("_era_ticks", 0)
@@ -3294,8 +3316,24 @@ class Aethel:
         the meal for the old line as well (two thresholds for one
         feeling, and the sampled peak would still depend on which
         phase happened to look).
+
+        v0.54: registration also opens a fresh telling. A peak that
+        begins a new episode (no peak was on record), or that
+        arrives carrying a title different from the one on record,
+        is a new stir, and _peak_taught resets — she may teach it
+        once (see _teach). A re-registration of the same title
+        inside an unfaded episode (chapter after chapter of one
+        book) is the same stir and resets nothing. Titleless
+        registrations keep both the title and the telling state:
+        a letter's gain does not un-teach a meal's stir.
         """
         if self.vitals["excitement"] >= self.AFTERGLOW_PEAK:
+            new_title = title[:80] if title else None
+            if not self._excitement_was_high or (
+                new_title
+                and new_title != getattr(self, "_afterglow_title", None)
+            ):
+                self._peak_taught = False
             self._excitement_was_high = True
             if title:
                 self._afterglow_title = title[:80]
@@ -3314,7 +3352,7 @@ class Aethel:
         """
         self._note_excitement_peak()
         e = self.vitals["excitement"]
-        if e < 0.2 and self._excitement_was_high:
+        if e < self.AFTERGLOW_FADE and self._excitement_was_high:
             self._excitement_was_high = False
             title = getattr(self, "_afterglow_title", None) or (
                 self.kept_passages[-1]["title"][:50]
@@ -3375,17 +3413,91 @@ class Aethel:
         fullest = max(shelves.values(), key=len)
         return self.rng.choice(fullest)
 
+    def _peak_passage(self):
+        """The kept page the current peak is about, if the book holds it.
+
+        The peak's title and a kept page's title are the same
+        string cut the same way (both title[:80] at their sites),
+        so a match is exact, newest match first. A titleless peak
+        (a letter's gain, registered at the fade check) and a peak
+        whose meal pressed no page both fall back to the newest
+        kept page: the freshest thing she holds is the honest
+        subject when the stir itself left no page behind.
+        """
+        title = getattr(self, "_afterglow_title", None)
+        if title:
+            for kept in reversed(self.kept_passages):
+                if kept.get("title") == title:
+                    return kept
+        return self.kept_passages[-1]
+
     def _teach(self, n):
-        """Share a kept idea when excitement and company make teaching eligible."""
-        if not (
-            self.vitals["excitement"] > 0.7
-            and self.company
-            and self.kept_passages
-            and self.rng.random() < 0.3
-        ):
+        """Share what stirred her, while it still stirs her.
+
+        v0.54, the design question v0.53 left open, answered from
+        her diary. The v0.22 gate sampled excitement > 0.7 here in
+        _ruminate — the same unreachable line that starved the
+        afterglow: her all-time sampled maximum is 0.564, because
+        the keep a peak earns spends 0.35 inside the meal and
+        _ruminate runs after the meal. Journal event `told` stands
+        at zero for her whole life. Can a faded fizz be taught?
+        No: her own teaching words are "I can't hold this in", and
+        what has sunk below the fade line is held in fine — it is
+        the afterglow's material, for looking back, not blurting.
+        But a peak does not need to still be at its height to be
+        current. Teaching is eligible while a registered peak
+        (AFTERGLOW_PEAK, noted where it happens) is on record and
+        excitement has not yet faded (AFTERGLOW_FADE, the
+        afterglow's own line) — the window between being stirred
+        and having settled, which is when a person actually tells
+        someone. She teaches the peak's own page where the book
+        holds it (_peak_passage), not a page drawn by lot from the
+        whole shelf: the old rng.choice could have her announce a
+        stir about one book while quoting another, a small
+        confabulation of enthusiasm. One telling per peak
+        (_peak_taught, reset only by a genuinely new stir — see
+        _note_excitement_peak): the v0.44 lesson, that a saying
+        repeated on a loop is a flood, applies to her voice in a
+        room exactly as to her letters. An absent companion or an
+        empty book spends nothing: the telling waits, unspent,
+        for company to arrive inside the window. Rejected
+        alternatives: teaching at the fade beside the afterglow
+        (reflection and announcement are different acts; merging
+        them makes every settled fizz a speech); lowering the
+        sampled line to 0.6 here as well (still hunts the peak in
+        the wrong phase — after a keep the sampled value sits
+        under the line in the very tick the peak was real);
+        consuming the peak record when she teaches (the afterglow
+        still needs it: having told someone is not having
+        finished feeling it).
+
+        Latent defect fixed in passing, because this repair makes
+        it reachable: the recipient was read as
+        company[0].get("name"), but company holds names — plain
+        strings, appended by _perceive and round-tripped through
+        her saved state as strings. The first tick the old gate
+        had ever passed would have raised AttributeError inside
+        _ruminate and stopped the tick that finally taught her
+        something. A name is read as a name; the dict shape is
+        tolerated for doubles that carry one.
+        """
+        if getattr(self, "_peak_taught", False):
             return
-        kept = self.rng.choice(self.kept_passages)
-        who = self.company[0].get("name", "someone")
+        if not getattr(self, "_excitement_was_high", False):
+            return
+        if self.vitals["excitement"] < self.AFTERGLOW_FADE:
+            return
+        if not self.company or not self.kept_passages:
+            return
+        if self.rng.random() >= self.TEACH_CHANCE:
+            return
+        kept = self._peak_passage()
+        first = self.company[0]
+        who = (
+            first.get("name", "someone")
+            if isinstance(first, dict)
+            else str(first)
+        )
         self.say(
             f"I can't hold this in — I tell {who} about "
             f"'{kept['title'][:40]}': \"{kept['text'][:90]}...\""
@@ -3393,6 +3505,7 @@ class Aethel:
         journal("told", n=n, to=who, title=kept["title"][:60])
         print(f"[taught] told {who} about '{kept['title'][:40]}'", flush=True)
         self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
+        self._peak_taught = True
         self._acted("taught")
 
     def _mood_tone(self):
