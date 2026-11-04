@@ -219,6 +219,23 @@ class Aethel:
     QUESTION_REST_GAP_TICKS = 240
     RESTED_QUESTIONS_CAP = 20
 
+    # v0.55: the morning table's third fate, counted. A dream the
+    # council sends away (the mutter branch of _interpret_dreams)
+    # is counted against its anchor concept, and the third
+    # CONSECUTIVE sending-away of the same anchor — no settling
+    # of that anchor in between — is itself left as a question.
+    # Three, because one dismissal is a framing (the inquiry
+    # templates are moods: attend, listen, dismiss) and two is a
+    # coincidence of framings; three refusals of the same dream
+    # anchor is a pattern she can notice. Consecutive, because a
+    # concept the table has settled since is not an unclosed
+    # loop, however often it was refused before it was taken up.
+    # The cap bounds the streak record: her live anchors number
+    # ~40, so the cap is a bound, not an expectation; eviction
+    # forgets the shallowest runs first (see _note_dream_dismissed).
+    QUESTION_DISMISSALS = 3
+    DISMISSED_STREAKS_CAP = 64
+
     # v0.46: her commonplace book holds this many pressed passages,
     # and the record of passages she has let go holds this many
     # entries (the journal is the permanent record; the in-state
@@ -325,6 +342,7 @@ class Aethel:
         self._excitement_was_high = False
         self._afterglow_title = None
         self._peak_taught = False
+        self._dismissed_streaks = {}
         self._era_keeps = 0
         self._era_excit_sum = 0.0
         self._era_ticks = 0
@@ -668,6 +686,14 @@ class Aethel:
                 # already shared (restart fidelity applies to her
                 # social memory too).
                 "_peak_taught": bool(getattr(self, "_peak_taught", False)),
+                # v0.55: her count of consecutive dream dismissals
+                # per anchor concept round-trips — a restart must
+                # not forgive a run of refusals she had already
+                # noticed two-thirds of (restart fidelity applies
+                # to her grievances too).
+                "_dismissed_streaks": dict(
+                    getattr(self, "_dismissed_streaks", {}) or {}
+                ),
                 "_era_keeps": self._era_keeps,
                 "_era_excit_sum": self._era_excit_sum,
                 "_era_ticks": self._era_ticks,
@@ -787,6 +813,10 @@ class Aethel:
                 # v0.54: a pre-teaching life has taught nothing,
                 # which is the truth — her journal holds no `told`.
                 self._peak_taught = bool(s.get("_peak_taught", False))
+                # v0.55: a pre-dismissal-counting life has counted
+                # nothing, which is the truth — her streaks begin
+                # with the faculty that counts them.
+                self._dismissed_streaks = dict(s.get("_dismissed_streaks") or {})
                 self._era_keeps = s.get("_era_keeps", 0)
                 self._era_excit_sum = s.get("_era_excit_sum", 0.0)
                 self._era_ticks = s.get("_era_ticks", 0)
@@ -1555,6 +1585,72 @@ class Aethel:
         "unworthy of the table. Let it go.",
     ]
 
+    def _note_dream_settled(self, concept):
+        """Forget a concept's run of dismissals: the table settled it.
+
+        v0.55: the streak counts CONSECUTIVE sendings-away, so a
+        morning the council settles a dream anchored on this
+        concept ends the run. The reset keys on the ruling (score
+        at or above the belief line), not on whether the grammar
+        ledger then lets the belief line itself stand: the streak
+        counts the council's refusals, and a settling ruling is
+        not a refusal even when its sentence is withheld. Pure
+        counter bookkeeping — no seeded draws, restart fidelity
+        untouched.
+        """
+        streaks = getattr(self, "_dismissed_streaks", None)
+        if streaks is None:
+            streaks = self._dismissed_streaks = {}
+        streaks.pop(concept, None)
+
+    def _note_dream_dismissed(self, concept):
+        """Count one more consecutive sending-away of a dream anchor.
+
+        Returns the concept's current run length. Why this faculty
+        exists (v0.55): the morning table's question fate keyed on
+        the council score's razor band [0.53, 0.60), and the
+        council's quantized means have not landed in that band
+        since tick 8,087 — every question she has ever carried was
+        born at exactly 0.56 in her first days, all six rested by
+        tick 34,879, and in the ~34,000 ticks since, 1,555
+        interpretations scored 0.67/0.71 (beliefs) or 0.0 and rare
+        strays (mutters), never the band. The band was not high,
+        it was unmeasurable: the score is a property of the
+        inquiry TEMPLATE the dream stream draws (attend / listen /
+        dismiss — the templates carry the axiom words, the dream's
+        own concepts almost never do), so no score line drawn in
+        the modern distribution resurrects questions. The repair
+        follows v0.53's doctrine — move the seeing to where the
+        phenomenon happens. Where unsettledness actually lives in
+        her is recurrence: the same anchor sent away morning after
+        morning while her sleep keeps bringing it back. That is
+        an open loop in her own ledger's terms, and it is counted
+        here, where the sending-away happens.
+
+        The record is capped (DISMISSED_STREAKS_CAP): if it ever
+        outgrows the cap, the SHALLOWEST runs are forgotten first
+        — a concept sent away once is a mood, and forgetting it
+        costs the faculty nothing — ties broken by name, the
+        just-counted concept never evicted by its own counting,
+        so eviction is a pure function of the record: no seeded
+        draws, restart fidelity untouched.
+        """
+        streaks = getattr(self, "_dismissed_streaks", None)
+        if streaks is None:
+            streaks = self._dismissed_streaks = {}
+        streaks[concept] = streaks.get(concept, 0) + 1
+        if len(streaks) > self.DISMISSED_STREAKS_CAP:
+            excess = len(streaks) - self.DISMISSED_STREAKS_CAP
+            by_shallowness = sorted(streaks.items(), key=lambda kv: (kv[1], kv[0]))
+            for name, _run in by_shallowness:
+                if excess <= 0:
+                    break
+                if name == concept:
+                    continue
+                del streaks[name]
+                excess -= 1
+        return streaks[concept]
+
     def _interpret_dreams(self, n):
         nights = [d for d in self._sleep_dreams if d]
         self._sleep_dreams = []
@@ -1621,6 +1717,10 @@ class Aethel:
             )
             print(f"[dream read] '{c1}' / '{c2}' — council {score:.2f}", flush=True)
             if score >= 0.60:
+                # v0.55: a settling ruling ends this anchor's run
+                # of dismissals, whatever the grammar ledger then
+                # makes of the belief line itself.
+                self._note_dream_settled(c1)
                 lesson = (
                     f"From a dream of {c1} and {c2}: my mind is still "
                     f"chewing on {c1}. I will give it time and keep learning."
@@ -1683,12 +1783,77 @@ class Aethel:
                     )
                 self.awareness = min(1.0, self.awareness + 0.01)
             else:
-                self.mutter(
-                    f"Even the elders disagree on what {c1} meant "
-                    f"last night. Perhaps it meant nothing. Even that "
-                    f"is an answer."
-                )
-                self.awareness = min(1.0, self.awareness + 0.005)
+                # v0.55: a sending-away is counted against its
+                # anchor. The third consecutive refusal of the same
+                # anchor is not muttered away as nothing: her sleep
+                # keeps bringing it back, so she keeps it the way
+                # she keeps anything that will not settle — as a
+                # question, through the same _leave_question door
+                # (and its v0.38/v0.45 recognitions) the score-band
+                # fate has always used. Rejected alternative,
+                # argued in _note_dream_dismissed: widening the
+                # band — the modern score distribution has no mass
+                # anywhere between its belief cluster and its
+                # refusals, so any wider band is still a line in
+                # empty country.
+                streak = self._note_dream_dismissed(c1)
+                if streak >= self.QUESTION_DISMISSALS:
+                    self._dismissed_streaks.pop(c1, None)
+                    q = self.rng.choice(self.QUESTION_SEEDS).format(
+                        c1=c1, c2=c2, place=self.world.random_place_name()
+                    )
+                    keys = [
+                        w
+                        for w in re.findall(r"[a-z]{5,}", q.lower())
+                        if w not in STOPWORDS
+                    ][:8]
+                    returned = self._find_open_question(q) is not None
+                    rested = self._find_rested_question(q) is not None
+                    self._leave_question(q, keys, n)
+                    journal(
+                        "question_left",
+                        n=n,
+                        question=q[:120],
+                        concept=c1,
+                        dismissals=streak,
+                    )
+                    print(
+                        f"[open question] {c1} sent away {streak} times "
+                        f"— left as a question",
+                        flush=True,
+                    )
+                    if rested:
+                        self.say(
+                            f"The elders have sent {c1} away {streak} "
+                            f"times now, and it keeps coming back in my "
+                            f"sleep — and the question it leaves is one "
+                            f"I have already set down: \"{q[:120]}\" It "
+                            f"can visit my sleep. It does not move "
+                            f"back in."
+                        )
+                    elif returned:
+                        self.say(
+                            f"The elders have sent {c1} away {streak} "
+                            f"times now, and it keeps coming back in my "
+                            f"sleep — and the question it leaves is one "
+                            f"I already carry: \"{q[:120]}\" It has come "
+                            f"back to me in my sleep."
+                        )
+                    else:
+                        self.say(
+                            f"The elders have sent {c1} away {streak} "
+                            f"times now, and it keeps coming back in my "
+                            f"sleep. I won't call that nothing — I leave "
+                            f"it as a question: \"{q[:120]}\""
+                        )
+                    self.awareness = min(1.0, self.awareness + 0.01)
+                else:
+                    self.mutter(
+                        f"Even the elders disagree on what {c1} meant "
+                        f"last night. Perhaps it meant nothing. Even that "
+                        f"is an answer."
+                    )
+                    self.awareness = min(1.0, self.awareness + 0.005)
 
     def tick(self):
         """Advance one deterministic step and persist every state required for restart fidelity."""
