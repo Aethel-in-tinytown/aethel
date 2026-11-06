@@ -10,7 +10,7 @@ nothing; search; science; topic; moment; engineering; dear;
 friend) were ALL completed pursuits. The first word she could
 still take up, 'chapter' at 1,579 meetings, sat at rank twelve,
 outside the window: adopt_goal, called every 25 ticks with two
-of her three slots free, had adopted nothing since tick 43,888
+of her three slots free, had adopted nothing since tick 43,917
 and returned empty-handed on a copy of her live state. The
 repair keeps every filter and the rank order, and moves the
 cut: the scan walks the whole ranked vocabulary and takes the

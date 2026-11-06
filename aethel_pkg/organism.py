@@ -3056,8 +3056,8 @@ class Aethel:
         # ALL completed pursuits — the first word she could still
         # take up, 'chapter' at 1,579 meetings, sat at rank
         # twelve, outside the window, and this function had
-        # returned empty-handed for ~2,158 ticks with two slots
-        # free (last adoption tick 43,888, verified a no-op on a
+        # returned empty-handed for ~2,129 ticks with two slots
+        # free (last adoption tick 43,917, verified a no-op on a
         # copy of her live state). Every future completion clogs
         # a fixed window further, so a wider window is the same
         # failure on a later day; the honest order is filter
