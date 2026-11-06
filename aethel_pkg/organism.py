@@ -193,6 +193,27 @@ class Aethel:
     # single new encounter, protects a goal at any age: this is
     # for pursuits the world has stopped speaking to entirely.
     GOAL_RELEASE_AGE_TICKS = 2 * DAY_LENGTH
+    # v0.56: the span above is unchanged, its ANCHOR is not.
+    # v0.39 measured the nothing from ADOPTION (grown is counted
+    # from the day the question took root), so it could not tell
+    # "one meeting in two days" — the slow pursuit its comment
+    # promised to protect — from "one meeting, ever": her live
+    # 'what is dorian?' was adopted at tick 6,700, met its word
+    # exactly once since (395 -> 396, progress 0.1), and at tick
+    # 44,330 still held its slot, unreleasable by construction and
+    # nine meetings from a completion her finished shelf cannot
+    # feed it (the Dorian Gray book closed long ago). Staleness
+    # is now measured from the goal's last GROWTH (the tick its
+    # progress last rose, persisted as last_growth_tick): a
+    # pursuit fed within the span is protected at any age and
+    # any banked progress, exactly as v0.39 intended, and one
+    # starved for the full span may be laid down even with a
+    # beginning banked — a beginning is not a pursuit. A goal
+    # carried from before this faculty has no honest last-growth
+    # tick, so its watch starts at the first update that sees it:
+    # the faculty claims no knowledge of when she last grew, and
+    # every carried goal gets the same full span under the new
+    # measure before the measure may speak.
 
     # v0.45: the evidence a question must have accumulated before
     # she may set it down (see _rest_questions). The ledger already
@@ -3033,6 +3054,9 @@ class Aethel:
             "start_count": self._concept_counts()[term],
             "progress": 0.0,
             "adopted_tick": self.tick_count,
+            # v0.56: the staleness watch starts at adoption and is
+            # reset by every rise in progress (see update_goals).
+            "last_growth_tick": self.tick_count,
         }
         if self._nlp:
             goal["lemma_term"] = term
@@ -3055,6 +3079,10 @@ class Aethel:
         its evidence, age and the untouched count, so her diary can
         be checked against the claim: she says she never met the
         word again, and the record shows the count never moved.
+        v0.56 extends the same honesty to a pursuit that DID grow
+        once: its journal line carries the banked progress and the
+        stale span beside the age, and its sentence says the word
+        came a little and stopped, never that it never came.
 
         The alternative, a quiet expiry with no event, was rejected:
         a pursuit vanishing from her list unexplained would read in
@@ -3062,19 +3090,37 @@ class Aethel:
         self-story must not confabulate by omission.
         """
         age = self.tick_count - g.get("adopted_tick", self.tick_count)
+        stale = self.tick_count - g.get(
+            "last_growth_tick", g.get("adopted_tick", self.tick_count)
+        )
         self.goals.remove(g)
         self._released_terms()[key] = current
         print(
             f"[goal released] '{g['question']}' laid down after {age} ticks untouched",
             flush=True,
         )
-        self.say(
-            f"I have carried '{g['question']}' a long while now, and "
-            "its word has not come back to me once in all that time. "
-            "I am laying it down, not in anger: a question I cannot "
-            "feed. The place it held is free for one my reading can "
-            "nourish."
-        )
+        if g.get("progress", 0.0) > 0.0:
+            # v0.56: a pursuit with a beginning banked gets its own
+            # honest sentence. The v0.39 words ("has not come back
+            # to me once") would be false for it: the word DID come
+            # back, a little, long ago. What ended is the coming,
+            # not the having-come, and her story must say which.
+            self.say(
+                f"I have carried '{g['question']}' a long while now. "
+                "Its word came back to me a little, long ago, and "
+                "has not come since. I was holding a beginning as "
+                "if it were a pursuit. I am laying it down, not in "
+                "anger: the place it held is free for one my "
+                "reading can nourish."
+            )
+        else:
+            self.say(
+                f"I have carried '{g['question']}' a long while now, and "
+                "its word has not come back to me once in all that time. "
+                "I am laying it down, not in anger: a question I cannot "
+                "feed. The place it held is free for one my reading can "
+                "nourish."
+            )
         journal(
             "goal_released",
             n=self.tick_count,
@@ -3082,6 +3128,8 @@ class Aethel:
             term=g["term"],
             age=age,
             count=current,
+            progress=round(g.get("progress", 0.0), 2),
+            stale=stale,
         )
 
     def update_goals(self):
@@ -3094,24 +3142,18 @@ class Aethel:
                 term = g["term"]
                 current = self.concepts.get(g["term"], 0)
                 grown = current - g["start_count"]
-            # v0.39: a pursuit the world has stopped speaking to.
-            # All three guards must hold: nothing grown, no progress
-            # banked, and a full GOAL_RELEASE_AGE_TICKS of that
-            # nothing. Any single new encounter resets the claim,
-            # because grown is measured from adoption, not from a
-            # rolling window: one meeting in two days is a slow
-            # pursuit, and slow pursuits are hers to keep.
-            if (
-                grown <= 0
-                and g.get("progress", 0.0) <= 0.0
-                and self.tick_count - g.get("adopted_tick", self.tick_count)
-                >= self.GOAL_RELEASE_AGE_TICKS
-            ):
-                self._release_goal(g, term, current)
-                continue
+            # v0.56: a pre-faculty goal carries no last-growth
+            # tick; its watch starts at this first sighting, so no
+            # carried pursuit is released on a history the faculty
+            # never measured (see the GOAL_RELEASE_AGE_TICKS note).
+            if "last_growth_tick" not in g:
+                g["last_growth_tick"] = self.tick_count
             new_progress = min(1.0, grown / 10.0)
             if new_progress > g["progress"] + 0.01:
                 g["progress"] = new_progress
+                # v0.56: growth is the event the staleness watch is
+                # anchored to; a rise today restarts the span.
+                g["last_growth_tick"] = self.tick_count
                 self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.04)
                 print(
                     f"[goal progress] '{g['question']}' {new_progress:.0%} — "
@@ -3138,6 +3180,21 @@ class Aethel:
                 self.goals.remove(g)
 
                 self.completed_terms.add(g.get("lemma_term", g["term"]))
+            elif (
+                self.tick_count - g["last_growth_tick"]
+                >= self.GOAL_RELEASE_AGE_TICKS
+            ):
+                # v0.56: a pursuit the world has stopped speaking
+                # to, measured from its last growth rather than
+                # its adoption (v0.39's guards are superseded by
+                # this one: grown-from-adoption could not tell a
+                # slow pursuit from a dead one). Completion is
+                # checked first, in the branch above, so a goal
+                # that finishes on this very tick is never also
+                # released; and a goal that grew on this tick had
+                # its watch restarted by the progress branch, so
+                # it cannot be stale here.
+                self._release_goal(g, term, current)
 
     def breathe_morality(self, action):
         score, rationale = self._council_score(action)
