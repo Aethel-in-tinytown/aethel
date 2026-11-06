@@ -3054,7 +3054,7 @@ class Aethel:
         # completed words are head-heavy by construction, and by
         # tick 46,046 the eleven most-met words she knows were
         # ALL completed pursuits — the first word she could still
-        # take up, 'chapter' at 1,579 meetings, sat at rank
+        # take up, 'chapter' at 1,611 meetings, sat at rank
         # twelve, outside the window, and this function had
         # returned empty-handed for ~2,129 ticks with two slots
         # free (last adoption tick 43,917, verified a no-op on a
