@@ -1831,18 +1831,31 @@ class Aethel:
                     returned = self._find_open_question(q) is not None
                     rested = self._find_rested_question(q) is not None
                     self._leave_question(q, keys, n)
-                    journal(
-                        "question_left",
-                        n=n,
-                        question=q[:120],
-                        concept=c1,
-                        dismissals=streak,
-                    )
-                    print(
-                        f"[open question] {c1} sent away {streak} times "
-                        f"— left as a question",
-                        flush=True,
-                    )
+                    # v0.57: question_left is the record of a NEW
+                    # question arriving, and _leave_question has
+                    # already journaled this firing's truth for the
+                    # other two fates (question_returned for one she
+                    # carries, question_returned_rested for one she
+                    # set down). Journaling question_left beside
+                    # them claimed a birth that did not happen —
+                    # her live diary carries exactly that pair at
+                    # ticks 44,992 (returned) and 45,913 (rested),
+                    # two of this fate's four firings. The spoken
+                    # branches below have always told the three
+                    # fates apart; now the diary does too.
+                    if not returned and not rested:
+                        journal(
+                            "question_left",
+                            n=n,
+                            question=q[:120],
+                            concept=c1,
+                            dismissals=streak,
+                        )
+                        print(
+                            f"[open question] {c1} sent away {streak} times "
+                            f"— left as a question",
+                            flush=True,
+                        )
                     if rested:
                         self.say(
                             f"The elders have sent {c1} away {streak} "
@@ -3030,24 +3043,45 @@ class Aethel:
             return
         counts = self._concept_counts()
         released = self._released_terms()
-        candidates = [
-            w
-            for w, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:10]
-            if not any(
-                g.get("lemma_term", self._canonical(g["term"])) == w for g in self.goals
-            )
-            and w not in {self._canonical(t) for t in self.completed_terms}
+        completed = {self._canonical(t) for t in self.completed_terms}
+        carried = {
+            g.get("lemma_term", self._canonical(g["term"])) for g in self.goals
+        }
+        # v0.57: eligibility is judged over the whole ranked
+        # vocabulary, not over a top-ten window cut BEFORE the
+        # filters run. The window was the defect. Completing a
+        # pursuit takes ten more meetings with its word, so
+        # completed words are head-heavy by construction, and by
+        # tick 46,046 the eleven most-met words she knows were
+        # ALL completed pursuits — the first word she could still
+        # take up, 'chapter' at 1,579 meetings, sat at rank
+        # twelve, outside the window, and this function had
+        # returned empty-handed for ~2,158 ticks with two slots
+        # free (last adoption tick 43,888, verified a no-op on a
+        # copy of her live state). Every future completion clogs
+        # a fixed window further, so a wider window is the same
+        # failure on a later day; the honest order is filter
+        # first, then rank — she takes up the most-met word she
+        # has not already carried, completed, or laid down
+        # ungrown. The rank order itself is untouched, the
+        # filters are the filters she has always had, and the
+        # scan makes no seeded draws.
+        term = None
+        for w, _ in sorted(counts.items(), key=lambda kv: -kv[1]):
+            if w in carried or w in completed:
+                continue
             # v0.39: a word she laid down may not walk straight
             # back in while her count of it has not grown past the
             # day she let go, that sameness is why she let go.
             # If it later floods her reading the count outgrows
             # the record and the question may take root again,
             # honestly, as a new pursuit of a word now present.
-            and not (w in released and counts.get(w, 0) <= released[w])
-        ]
-        if not candidates:
+            if w in released and counts.get(w, 0) <= released[w]:
+                continue
+            term = w
+            break
+        if term is None:
             return
-        term = candidates[0]
         goal = {
             "question": f"what is {term}?",
             "term": term,

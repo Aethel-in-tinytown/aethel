@@ -24,6 +24,12 @@ of the same dream anchor. Tests:
    instead of duplicating it (v0.38 recognition still governs);
 6. a rested question the streak re-raises is recognized, not
    reopened (v0.45 still governs);
+5b/6b (v0.57): the diary tells the three fates apart — a firing
+   on a carried or rested question journals NO question_left
+   beside its question_returned / question_returned_rested.
+   The v0.55 code journaled question_left unconditionally, so
+   her live diary claims a birth at ticks 44,992 and 45,913
+   for questions that had only returned or visited;
 7. below the threshold the old mutter stands unchanged;
 8. the bookkeeping is deterministic: identical lives fed
    identical mornings hold identical streaks and questions;
@@ -176,6 +182,9 @@ class TestDismissalStreaks(TempLife):
         self.assertEqual(a.open_questions[0]["touches"], 1)
         returned = [kw for ev, kw in self.events if ev == "question_returned"]
         self.assertEqual(len(returned), 1)
+        # v0.57: the return is not also journaled as a birth —
+        # exactly one question_left, from the first firing
+        self.assertEqual(len(self.fired()), 1)
 
     def test_rested_question_recognized_not_reopened(self):
         a = self.build()
@@ -195,6 +204,10 @@ class TestDismissalStreaks(TempLife):
             kw for ev, kw in self.events if ev == "question_returned_rested"
         ]
         self.assertEqual(len(rested_hits), 1)
+        # v0.57: a visit from a rested question is not journaled
+        # as a question left — she set it down, and the diary
+        # must not claim she picked it back up
+        self.assertEqual(self.fired(), [])
 
     def test_below_threshold_the_mutter_stands(self):
         a = self.build()
