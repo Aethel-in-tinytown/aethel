@@ -1,3 +1,3 @@
 """Expose the release identifier without importing UI or transport dependencies."""
 
-VERSION = "0.57.0"
+VERSION = "0.58.0"

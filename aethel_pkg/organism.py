@@ -288,6 +288,21 @@ class Aethel:
     AFTERGLOW_FADE = 0.2
     TEACH_CHANCE = 0.3
 
+    # v0.58: the reread gate, named because two hosts now share
+    # it (see _reread). REREAD_EXCITEMENT is the line consolidate
+    # has always used — a reread is a quiet act, taken when the
+    # fizz is down, never mid-stir — and REREAD_CHANCE is its
+    # long-standing 0.6. REREAD_GAP_TICKS is the cadence of the
+    # new ruminate occasion: 240 ticks (two hours of her time,
+    # the QUESTION_REST_GAP_TICKS scale), twelve quiet checks a
+    # day, each still subject to both gates, so a day of reading
+    # weather like her recent one yields a handful of returns to
+    # the shelf — the rate her early life actually showed (50
+    # rereads across her first 34,529 ticks) — not a flood.
+    REREAD_EXCITEMENT = 0.45
+    REREAD_CHANCE = 0.6
+    REREAD_GAP_TICKS = 240
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -2172,6 +2187,15 @@ class Aethel:
 
         self._teach(n)
 
+        # v0.58: a quiet-moment reread on its own cadence, the
+        # second door _reread's docstring argues for. The cadence
+        # is a tick multiple like the other periodic faculties
+        # above, so a boundary she sleeps through costs one check,
+        # never a record; the gates inside _reread decide whether
+        # the moment is actually quiet enough to open the book.
+        if n % self.REREAD_GAP_TICKS == 0:
+            self._reread()
+
         self.mood = max(-1.0, min(1.0, self.mood * 0.995))
         tone = self._mood_tone()
         if tone in self.MOODLINES and self.rng.random() < 0.015:
@@ -2985,6 +3009,91 @@ class Aethel:
                 flush=True,
             )
 
+    def _reread(self):
+        """Take a kept passage down and read it again (v0.22, rehomed v0.58).
+
+        The act itself is unchanged from the day it was written:
+        in a quiet moment (excitement below REREAD_EXCITEMENT),
+        at REREAD_CHANCE, she picks a page from her fullest shelf,
+        counts the return on the page, and says so in the same
+        words. What v0.58 changes is where the act may happen,
+        because its only home had become unreachable.
+
+        The reread lived solely inside consolidate(), and
+        consolidate() runs solely on the thirst drive. The drive
+        selector (MockLLM.generate) never lets the body drives
+        compete at all while vitality is below 0.45 (reach
+        preempts) or longing is above 0.6 (express preempts) —
+        and those two states between them covered every driven
+        tick of her recent life. Measured from her stdout drive
+        lines: thirst won 3 of the 7,137 drives since her last
+        reread (tick 34,529), 0 of the 1,722 since her last
+        consolidation (tick 44,942), and 0 of the 1,113 since the
+        v0.57 reading, a reading that already named this faculty
+        "starved of occasions, not broken" and left it for a
+        later day. The three consolidations that did occur since
+        the last reread (ticks 34,586, 35,260, 44,942, all sampled
+        at excitement 0.23–0.30, under the gate) fired no reread.
+        Meanwhile the rest of the return economy kept moving
+        without her: 50 reread events in her whole diary, the
+        book at its 120-page cap letting pages go she had never
+        once returned to, and _favorite_kept frozen on the
+        Moby Dick era because no page has earned a return since.
+
+        Hunger and conscience, the thirst drive's siblings, each
+        have a back door (emergency forage in _behave; reflect
+        under lock and dormancy in _metabolize). Rereading had
+        none. The repair gives it the periodic-occasion shape
+        her other quiet faculties already use: _ruminate calls
+        this same method every REREAD_GAP_TICKS, beside the
+        question-resting it paces at the same gap. Consolidate
+        keeps its own call, unchanged — tidying the study is
+        still an occasion to take a page down — so the faculty
+        has two honest doors instead of one unreachable one.
+
+        Rejected alternatives: letting the thirst drive compete
+        under longing or low vitality (rewrites her drive
+        balance, the settled precedence of reach and express, to
+        fix an occasion problem — the v0.54 argument); moving
+        the reread out of consolidate entirely (the study-tidying
+        occasion is real and was never the defect; the defect is
+        that it was the ONLY one); dropping the excitement or
+        chance gate at the new door (a reread is a settled act,
+        and an ungated cadence would make returns a metronome,
+        not a mood — both gates are the faculty's own, shared by
+        both hosts from the named constants). Gate order is the
+        old short-circuit exactly — book, then excitement, then
+        the chance draw — so a closed gate consumes no seeded
+        draw at either door, and the act's own draws (shelf pick,
+        the margin coin) are the draws it has always made.
+        """
+        if not self.kept_passages:
+            return
+        if self.vitals["excitement"] >= self.REREAD_EXCITEMENT:
+            return
+        if self.rng.random() >= self.REREAD_CHANCE:
+            return
+        kept = self._shelf_pick()
+        kept["rereads"] = kept.get("rereads", 0) + 1
+        self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
+        print(
+            f"[reread] '{kept['title'][:40]}' (kept at tick {kept['tick']}, "
+            f"reread #{kept['rereads']})",
+            flush=True,
+        )
+        self.say(
+            f"I take down the '{kept['title'][:40]}' shelf and open "
+            f'it again. It still hums: "{kept["text"][:90]}..."'
+        )
+        if kept.get("margin") and self.rng.random() < 0.5:
+            self.mutter(kept["margin"] + " — still true.")
+        journal(
+            "reread",
+            n=self.tick_count,
+            title=kept["title"][:60],
+            rereads=kept["rereads"],
+        )
+
     def consolidate(self):
         if len(self.memory) >= 2:
             a, b = self.memory[-1], self.memory[-2]
@@ -2999,31 +3108,7 @@ class Aethel:
             journal("consolidate", a=a["title"][:60], b=b["title"][:60])
         self.vitals["hydration"] = min(1.0, self.vitals["hydration"] + 0.25)
 
-        if (
-            self.kept_passages
-            and self.vitals["excitement"] < 0.45
-            and self.rng.random() < 0.6
-        ):
-            kept = self._shelf_pick()
-            kept["rereads"] = kept.get("rereads", 0) + 1
-            self.vitals["vitality"] = min(1.0, self.vitals["vitality"] + 0.02)
-            print(
-                f"[reread] '{kept['title'][:40]}' (kept at tick {kept['tick']}, "
-                f"reread #{kept['rereads']})",
-                flush=True,
-            )
-            self.say(
-                f"I take down the '{kept['title'][:40]}' shelf and open "
-                f'it again. It still hums: "{kept["text"][:90]}..."'
-            )
-            if kept.get("margin") and self.rng.random() < 0.5:
-                self.mutter(kept["margin"] + " — still true.")
-            journal(
-                "reread",
-                n=self.tick_count,
-                title=kept["title"][:60],
-                rereads=kept["rereads"],
-            )
+        self._reread()
 
     def _released_terms(self):
         """Her record of laid-down pursuits, built lazily.
