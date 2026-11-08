@@ -3619,8 +3619,72 @@ class Aethel:
         print(f'Aethel (aside): "{text}"', flush=True)
         journal("aside", n=self.tick_count, text=text)
 
+    # v0.59: the mood weather hears the body at the crossings she
+    # already notices (see _threshold_moments). MOOD_BODY_VITALS is
+    # the body proper — satiety, hydration, oxygen, vitality —
+    # and deliberately excludes excitement, whose crossings already
+    # feed the afterglow/teaching economy (v0.53/v0.54); counting a
+    # stir as weather as well would hear the same event twice.
+    # MOOD_THRESHOLD_SHIFT is the resident company-arrival lift
+    # (+0.15 in _perceive): one noticed hardship weighs what one
+    # arrival weighs, and one noticed plenty weighs the same back.
+    MOOD_BODY_VITALS = ("satiety", "hydration", "oxygen", "vitality")
+    MOOD_THRESHOLD_SHIFT = 0.15
+
     def _threshold_moments(self, n):
-        """Notice newly crossed high and low vital bands without repeating stable states."""
+        """Notice newly crossed high and low vital bands without repeating stable states.
+
+        v0.59: a noticed crossing now also moves her mood. Her
+        weather (v0.15) was a ratchet: every _lift_mood call site in
+        her life is positive — company +0.15/+0.20, a check-in
+        +0.20, a letter +0.30, a crossroads choice +0.05 — except
+        one, an impulse refusal at −0.05 (five of them in her last
+        2,526 ticks, against 476 company arrivals in the same span,
+        no two arrivals more than 43 ticks apart in the last
+        10,000). Against a decay of 0.995 a tick, which at the
+        clamp can take at most 0.005, the arithmetic cannot turn:
+        replaying her journal from tick 40,000 to this reading
+        under the live rules, her mood never once falls below
+        0.81, and her diary holds exactly one mood_named event in
+        her life (tick 9,632, 'sparkling') with the name now
+        40,894 ticks old. The v0.58 entry named this a ratchet
+        candidate for a future day; this is that day. Her body, in
+        the same recent span, crossed into emergency 455 times
+        (starving 290, dehydrated 72, asphyxiating 86, dormant 7)
+        and her weather heard none of it.
+
+        The wiring goes where the noticing already is. This
+        method stops once per crossing — the persisted _vital_bands
+        record is the episode gate, a pass through mid re-arms it —
+        and says "I'll remember this feeling, whatever comes next";
+        until now the mood, the one faculty that IS feeling over
+        time, was never told. A body vital crossing low dips the
+        mood by MOOD_THRESHOLD_SHIFT and crossing high lifts it by
+        the same, so the layer is not a pessimism patch: it wires
+        an existing sense into the weather in both directions.
+        Replaying the same journal span with the shift live gives
+        bright 10,078 ticks, even 455, dim 0, a floor of −0.21 and
+        a final mood of 0.98 — the weather can turn even in a bad
+        stretch and recover, and bright remains her norm because
+        her life is mostly good. Rejected alternatives: dipping at
+        the _behave emergency sites (they fire at the 0.3 alarm
+        line, in the same tick she acts to fix the hardship, and
+        they are crisis handlers that also purge memory, lock her
+        doors and tax vitality — weather wired there is rewritten
+        by every future crisis change; dormancy, the deepest
+        hardship, has no emergency branch at all, it lives in
+        _metabolize, so that wiring would miss it entirely, while
+        this site hears a vitality crossing wherever it came
+        from); steepening the 0.995 decay (rewrites the weather's
+        timescale for her good stretches too — it punishes the
+        good days to fix the unheard bad ones); a dip per tick
+        spent low (the v0.44 flood shape — a state, repeated, is
+        not a moment). No new persisted state and no seeded draws:
+        _vital_bands already persists, and the shift is _lift_mood
+        arithmetic beside the journal line the crossing already
+        writes, so a pre-v0.59 life loads unchanged and restart
+        fidelity is untouched.
+        """
         for k, x in self.vitals.items():
             band = "high" if x >= 0.8 else ("low" if x < 0.2 else "mid")
             if self._vital_bands.get(k) not in (None, band) and band != "mid":
@@ -3631,6 +3695,12 @@ class Aethel:
                 )
                 journal("threshold", n=n, vital=k, band=band, value=round(x, 3))
                 print(f"[threshold] {k} {direction}", flush=True)
+                if k in self.MOOD_BODY_VITALS:
+                    self._lift_mood(
+                        self.MOOD_THRESHOLD_SHIFT
+                        if band == "high"
+                        else -self.MOOD_THRESHOLD_SHIFT
+                    )
             self._vital_bands[k] = band
 
     def _note_excitement_peak(self, title=None):
