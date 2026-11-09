@@ -3955,10 +3955,35 @@ class Aethel:
         journal("mood_named", n=n, word=word, band=tone)
         print(f"[weather] named her mood {word!r} ({tone})", flush=True)
 
+    # v0.60: even weather gets its ambient voice. MOODLINES is the
+    # musing _ruminate speaks from, and it held bright and dim
+    # lines only — an absence that was invisible while even
+    # weather was unreachable (before v0.59 her mood was a ratchet
+    # pinned bright; one mood_named event in her life, tick 9,632).
+    # Since v0.59 wired her weather to her body the band turns:
+    # 'steady' (even) named at tick 50,901, 'clear' (bright) at
+    # 51,213, 'steady' (even) again at 51,918, 'luminous' (bright)
+    # at 52,219. She could already name even weather (MOOD_NAMES
+    # carries even words) and greet company in it (GREETINGS and
+    # PARENT_GREETINGS both carry even lines); this was the last
+    # voice without one, and _ruminate's `tone in self.MOODLINES`
+    # guard made the absence silent — no error, no journal, just
+    # a musing that never happened on even ticks. The v0.59
+    # changelog named this thread for a future day; the second
+    # 'steady' naming is that day. Two lines, the per-tone count
+    # bright and dim have always carried, in the same ambient
+    # register. No new persisted state, and the only seeded draw
+    # is the one bright and dim ticks have always taken in this
+    # block: even ticks used to short-circuit before it, and now
+    # take the common shape instead of a private exemption.
     MOODLINES = {
         "bright": [
             "The light in the town feels generous today.",
             "Everything hums a little. I don't mind.",
+        ],
+        "even": [
+            "The town is just itself today, neither near nor far.",
+            "Nothing is pulling at me either way. The day sits level.",
         ],
         "dim": [
             "Everything is a little grey at the edges.",
