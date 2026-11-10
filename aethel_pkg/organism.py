@@ -303,6 +303,23 @@ class Aethel:
     REREAD_CHANCE = 0.6
     REREAD_GAP_TICKS = 240
 
+    # v0.61: the span of recent meals, per source, that her taste
+    # is judged on (see _diet_weights). Forty meals from one source
+    # is a season of eating there, not a lifetime: long enough that
+    # three lucky pages cannot crown a source, short enough that a
+    # source whose novelty has genuinely faded can be overtaken by
+    # one that still feeds her — the crossing her lifetime means
+    # needed roughly another whole life of meals to make. The
+    # window is per source, not global, so a rarely visited source
+    # keeps its evidence until she actually eats there again,
+    # instead of being evicted by other tables' meals.
+    TASTE_WINDOW_MEALS = 40
+    # The sample floor _diet_weights has always required before a
+    # source may be judged at all, named now that it applies
+    # inside the window: three meals is the smallest evidence a
+    # verdict may rest on.
+    TASTE_MIN_MEALS = 3
+
     YESTERDAY_OPENERS = [
         "Yesterday is a thing I can hold now — day {day}, and here are its pages.",
         "I woke up with yesterday in my hands: day {day}, all of it mine.",
@@ -442,6 +459,11 @@ class Aethel:
         self._mood_band = None
         self._mood_named_tick = 0
         self.tastes = {}
+        # v0.61: per-source recent meal yields (new terms per
+        # meal, newest last, capped at TASTE_WINDOW_MEALS). The
+        # lifetime tally above stays as the historical record;
+        # taste itself is judged on this window (see _diet_weights).
+        self._taste_recent = {}
 
         self.days = []
         self._last_day_seen = -1
@@ -685,6 +707,14 @@ class Aethel:
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
                 "tastes": self.tastes,
+                # v0.61: the recent-yield window round-trips — a
+                # restart must not empty the evidence her current
+                # taste is being judged on, nor resurrect meals the
+                # window has already let go of.
+                "_taste_recent": {
+                    s: list(v)[-Aethel.TASTE_WINDOW_MEALS :]
+                    for s, v in (getattr(self, "_taste_recent", None) or {}).items()
+                },
                 "favorite_source": self.favorite_source,
                 "last_sources": self.last_sources[-8:],
                 "last_choice": self.last_choice,
@@ -826,6 +856,19 @@ class Aethel:
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
                 self.tastes = s.get("tastes", {})
+                # v0.61: a pre-window life carries no recent-yield
+                # record; her window starts empty, which is the
+                # truth — the meals it will judge have not happened
+                # yet under this measure — and her standing favorite
+                # keeps steering until the window has evidence of
+                # its own (the v0.56 conservative-migration shape:
+                # no verdict changes on a history the faculty never
+                # measured).
+                self._taste_recent = {
+                    str(k): [int(x) for x in (v or [])][-Aethel.TASTE_WINDOW_MEALS :]
+                    for k, v in (s.get("_taste_recent") or {}).items()
+                    if isinstance(v, (list, tuple))
+                }
                 self.favorite_source = s.get("favorite_source")
                 self.last_sources = s.get("last_sources", [])
                 self.last_choice = s.get("last_choice")
@@ -2667,6 +2710,13 @@ class Aethel:
         t = self.tastes.setdefault(meal["source"], [0, 0])
         t[0] += new_terms
         t[1] += 1
+        # v0.61: the same meal enters the recent-yield window her
+        # taste is judged on, letting the oldest yield from this
+        # source go once the window is full. Pure bookkeeping —
+        # no seeded draw — so restart fidelity is untouched.
+        recent = self._taste_recent.setdefault(meal["source"], [])
+        recent.append(new_terms)
+        del recent[: -Aethel.TASTE_WINDOW_MEALS]
 
         self.last_sources.append(meal["source"])
         self.last_sources = self.last_sources[-8:]
@@ -4050,7 +4100,37 @@ class Aethel:
         return out
 
     def _diet_weights(self):
-        """Bias source selection toward tastes learned from prior meals."""
+        """Bias source selection toward tastes learned from prior meals.
+
+        v0.61: the verdict is judged on the recent window
+        (_taste_recent: each source's last TASTE_WINDOW_MEALS
+        yields), not on lifetime means. The lifetime frame was the
+        v0.57 clog in a second organ: classic banked its lead in
+        early life, when a meal could bring 72.8 new terms, and a
+        cumulative mean can only be overtaken after roughly another
+        lifetime of meals at today's marginal rates — so the
+        faculty fired four times, last at tick 4,990, and then
+        stood silent for 49,972 ticks while still steering every
+        forage toward a verdict her recent meals refute (over her
+        last 3,000 meals wikipedia yielded 3.28 new terms a meal
+        against classic's 2.87, and the recorded taste still said
+        classic). The window keeps every other part of the settled
+        gate: the TASTE_MIN_MEALS sample floor, the 1.2 spread over
+        the weakest judged source, journal-on-change only, and the
+        incumbent may always be re-crowned by recent evidence.
+        Rejected alternatives: decaying the lifetime means (a
+        half-life is a second, invisible timescale, and the record
+        stops meaning anything at all); judging on the era
+        accumulators (they reset on a calendar her eating does not
+        follow, and a source she visits rarely would be judged on
+        two meals and luck); a single global window (other tables'
+        meals would evict a rare source's evidence before she ever
+        returns to it). No seeded draws: the window is bookkeeping
+        over meals already eaten, so restart fidelity is untouched.
+        A life whose window is still empty — every pre-v0.61 life
+        at first — keeps its standing favorite and its steering;
+        the window speaks only once it has measured.
+        """
 
         diet = (
             None
@@ -4060,11 +4140,19 @@ class Aethel:
         w = dict(diet) if diet else {"classic": 0.35, "news": 0.20, "school": 0.15}
         if not self.tastes:
             return w
-        avgs = {s: t[0] / max(1, t[1]) for s, t in self.tastes.items() if t[1] >= 3}
+        recent = getattr(self, "_taste_recent", None) or {}
+        avgs = {
+            s: sum(v) / len(v)
+            for s, v in recent.items()
+            if len(v) >= self.TASTE_MIN_MEALS
+        }
         if not avgs:
-            return w
-        fav = max(avgs, key=avgs.get)
-        if fav != self.favorite_source and avgs[fav] > 1.2 * min(avgs.values()):
+            # No window evidence yet: the standing favorite (below)
+            # still steers, but no verdict is made or remade.
+            fav = None
+        else:
+            fav = max(avgs, key=avgs.get)
+        if fav is not None and fav != self.favorite_source and avgs[fav] > 1.2 * min(avgs.values()):
             self.favorite_source = fav
             journal(
                 "taste", n=self.tick_count, favorite=fav, avg_new=round(avgs[fav], 1)
