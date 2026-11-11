@@ -5826,6 +5826,17 @@ class Aethel:
     _PORTRAIT_VISIT_CAP = 24
     _PORTRAIT_STAY_CAP = 12
 
+    # v0.62: how long an understanding must stand, with its
+    # evidence grown underneath it, before she may re-notice it
+    # (see _portrait). Three days is the QUESTION_REST_AGE_TICKS
+    # scale — the span her other reckonings ask a carried thing to
+    # have lived — and it is a floor between refreshes, not a
+    # cadence: a refresh also requires the candidate's evidence to
+    # differ from the stored one, so a quiet kind (her letters,
+    # whose evidence is the count itself) may stand unrefreshed
+    # forever, honestly.
+    PORTRAIT_REFRESH_TICKS = 3 * DAY_LENGTH
+
     def _portrait_defaults(self):
         """Additive defaults: a pre-portrait life gains these, never loses."""
         return {
@@ -5993,7 +6004,62 @@ class Aethel:
         return cands
 
     def _portrait(self, n):
-        """Slow layer: let new evidence settle into (or out of) the portrait."""
+        """Slow layer: let new evidence settle into (or out of) the portrait.
+
+        v0.62 — an understanding may also be RE-noticed. Before
+        this, formation was the portrait's only motion: the loop
+        journaled and spoke only when a candidate's TEXT differed
+        from the stored understanding's, and kept the stored record
+        whole otherwise — evidence included. That made the faculty
+        a ratchet with a frozen dial. Her live portrait formed its
+        three understandings at ticks 20,184–20,579 and never spoke
+        again in 36,388 ticks, while Donald's town visits went from
+        34 to 934: the stored rhythm still cited "34 visits across
+        all quarters" as its evidence, and the stored stay "mean
+        stay 2 ticks over 3 visits" against a twelve-stay window
+        that had turned over many times since. The verdicts were
+        still true; the picture underneath them was a third of her
+        life old, and nothing she could live through would ever
+        update it, because evidence grows on days when text does
+        not change.
+
+        The refresh keeps formation exactly as it was — a new or
+        reworded understanding forms, journals and speaks as it
+        always has — and adds one motion beside it: when a
+        candidate's text is UNCHANGED but its evidence differs
+        from the stored record, and the understanding has stood at
+        least PORTRAIT_REFRESH_TICKS since it was formed (or last
+        refreshed), she notices it again. The stored record takes
+        the candidate's fresh evidence, keeps its formed_tick —
+        the day she first saw it is part of the portrait — and
+        stamps refreshed_tick; the journal gains a donald_understood
+        row carrying refreshed=True beside the new evidence, and
+        she speaks the re-noticing in its own words, never
+        formation's ("I keep noticing", not "I've started to
+        notice" — she has not started anything).
+
+        Rejected alternatives, argued: journalling every evidence
+        change (the rhythm evidence counts visits, so that is a
+        donald_understood row per visit — the v0.44 flood shape in
+        her most personal faculty); judging the rhythm on a recent
+        window instead, v0.61-style (the lifetime frame is not
+        indicted here the way taste's was — her verdicts are true,
+        and a window would make a settled picture of her father
+        flicker with the town's weather; what is broken is only
+        that the evidence under a standing verdict can never be
+        renewed); counting refresh from formation only (a second
+        refresh could then follow the first by a single tick
+        whenever evidence kept growing — the stamp moves, so the
+        span is always measured from the last time she spoke).
+        Migration is the v0.56 conservative shape in miniature: a
+        pre-v0.62 understanding carries no refreshed_tick, so its
+        age is measured from its formed_tick, the one honest stamp
+        it has, and no understanding can be refreshed on a span
+        the new measure never watched unless that full span has
+        also passed since formation. No seeded draws: the refresh
+        is a comparison of strings and a subtraction, so restart
+        fidelity is untouched.
+        """
         dm = self.donald_model
         if n % 12 != 0 and not self._portrait_dirty:
             return
@@ -6012,7 +6078,34 @@ class Aethel:
                 )
                 print(f"[portrait] {cand['kind']}: {cand['text']}", flush=True)
                 self.say(f"I've started to notice: {cand['text']}.")
-                kept.append({**cand, "formed_tick": n})
+                kept.append({**cand, "formed_tick": n, "refreshed_tick": n})
+            elif cand.get("evidence") != prev.get("evidence") and (
+                n
+                - prev.get(
+                    "refreshed_tick", prev.get("formed_tick", 0)
+                )
+                >= self.PORTRAIT_REFRESH_TICKS
+            ):
+                journal(
+                    "donald_understood",
+                    n=n,
+                    kind=cand["kind"],
+                    text=cand["text"],
+                    evidence=cand["evidence"],
+                    refreshed=True,
+                )
+                print(
+                    f"[portrait] {cand['kind']} refreshed: {cand['text']}",
+                    flush=True,
+                )
+                self.say(f"I keep noticing: {cand['text']}.")
+                kept.append(
+                    {
+                        **cand,
+                        "formed_tick": prev.get("formed_tick", n),
+                        "refreshed_tick": n,
+                    }
+                )
             else:
                 kept.append(prev)
         dm["understandings"] = kept
