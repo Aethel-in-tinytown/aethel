@@ -240,12 +240,34 @@ class Denizen:
             options = self.mind.steer(n, tod, list(options), override)
         options, weights = zip(*options)
         dest = rng.weighted_choice(list(options), list(weights))
-        if dest and dest != self.location:
+        moved = bool(dest and dest != self.location)
+        if moved:
             self.location = dest
-            if dest == self.home:
-                v["energy"] = min(1.0, v["energy"] + 0.35)
-            if dest == "hackernews":
-                v["hunger"] = min(1.0, v["hunger"] + 0.40)
+        # v0.63: rest and food belong to BEING at a place, not only
+        # to arriving there. Until now the two restores below lived
+        # inside the arrival branch, so a resident who reached home
+        # (or the Tavern) with a vital already at the floor was
+        # trapped by his own override: every later turn's options
+        # sent him where he already stood, he never "arrived" again,
+        # and the restore never fired — energy and hunger sat at
+        # 0.0 while the town's denizen journal recorded no move for
+        # him, in John's case not one move in the whole diary, and
+        # his mind's judged impulses starved behind the felt branch
+        # (the lowest vital was always a legacy one at zero). Her
+        # snapshot at tick 59,053 held all five residents at home
+        # with energy 0.0 and hunger 0.0. Sociability never trapped
+        # this way because its restore has always lived in the stay
+        # branch below; energy and hunger now keep the same shape.
+        # The amounts are the arrival amounts, unchanged, applied
+        # once per turn spent at the place: an arrival is simply
+        # the first turn of being there. No new draws — the turn's
+        # single weighted choice is untouched, so the town's draw
+        # sequences keep their shape.
+        if self.location == self.home:
+            v["energy"] = min(1.0, v["energy"] + 0.35)
+        if self.location == "hackernews":
+            v["hunger"] = min(1.0, v["hunger"] + 0.40)
+        if moved:
             return True
 
         here = placemap.get(self.location, [])
