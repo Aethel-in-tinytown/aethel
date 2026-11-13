@@ -42,6 +42,17 @@ dormant in v0.51 starts firing. Friday wrote this version after a
 supervised Anton draft was reviewed and bounced at the gate (payload
 keys, company tally, per-day resets); the close-at-rollover shape is
 his, the contract discipline is the review's.
+
+v0.64 gives each mind a memory of company that outlives the day page:
+affinities, a lifetime tally of counted company per fellow resident,
+accrued inside the same journal gate that fills day_company_counts
+(the two tallies can never argue about what was counted, because they
+are fed by the same lines of code). The day counters still reset at
+rollover for the page; the affinities do not, and Denizen's lonely
+branch reads them when it weighs where the people are, so a resident
+who has kept company with someone drifts toward that someone again.
+The day page payload is untouched: its keys are the v0.53 contract,
+and a lifetime bond is not a day fact.
 """
 
 from datetime import datetime, timezone
@@ -103,6 +114,15 @@ def _fresh_state():
         "day_shifts": 0,
         "day_company_events": 0,
         "day_company_counts": {},
+        # v0.64: lifetime counted company per fellow resident. Fed by
+        # the same gate as day_company_counts in _company_event, but
+        # never reset at rollover: the day page reports a day, while
+        # this is who the resident has actually spent their life with.
+        # A pre-v0.64 mind loads with {} through the field-by-field
+        # defaults in from_state and starts counting from its next
+        # counted company; the standing day tally is deliberately NOT
+        # backfilled into it, because a partial day is not a lifetime.
+        "affinities": {},
         "day_lowest_vital": None,
         "day_lowest_value": None,
         "day_base_judged": 0,
@@ -347,7 +367,38 @@ class ResidentMind:
                 counts = self.state["day_company_counts"]
                 for name in names:
                     counts[name] = counts.get(name, 0) + 1
+                # v0.64: the same counted company enters the lifetime
+                # tally in the same breath, so the bond and the day
+                # page are two readings of one record, never two
+                # records that could drift apart.
+                bonds = self.state.setdefault("affinities", {})
+                for name in names:
+                    bonds[name] = bonds.get(name, 0) + 1
                 self._journal(n, "company", names=names)
+
+    def affinity(self, name):
+        """Counted company kept with one fellow resident, lifetime.
+
+        Zero for anyone never counted, including Aethel: she is not a
+        denizen, so she never appears in a present list, and her pull
+        on a lonely resident stays the settled constant in
+        Denizen.transition_options rather than a bond that grows."""
+        return (self.state.get("affinities") or {}).get(name, 0)
+
+    def closest_company(self):
+        """The fellow resident this mind has counted most company with.
+
+        Ties go to whoever was counted first (insertion order), the
+        _close_day top_company rule, so the two records name the same
+        person when a day and a lifetime agree. None when the tally
+        is empty."""
+        best_name = None
+        best = 0
+        for name, count in (self.state.get("affinities") or {}).items():
+            if count > best:
+                best = count
+                best_name = name
+        return best_name
 
     def _close_day(self, n):
         """Write the closing day's page (spec 7.4) from its counters.

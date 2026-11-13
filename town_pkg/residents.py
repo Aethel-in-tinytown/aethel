@@ -40,6 +40,25 @@ WORK_ANCHOR = 0.92
 # delivery stop is weighted by how many residents wait there.
 ROUTE_HOME_WEIGHT = 2.0
 ROUTE_STAY_WEIGHT = 0.25
+# v0.64: a bond's weight in a lonely resident's choice. One counted
+# meeting (the mind's paced company gate, 240 ticks) is worth a
+# twentieth of a person's headcount weight; ten counted meetings
+# saturate the bond at half a person. The cap is the design: a bond
+# can tip a lonely resident's choice between two occupied places, but
+# it can never outweigh the crowd actually standing somewhere, never
+# rival Aethel's settled 2.0 pull, and never create an option — it
+# reweights only places the placemap already offers, because a bond
+# should bend a choice among real company, not invent a trip to an
+# empty room. Rejected alternatives: decaying the counts (a second,
+# invisible timescale under a tally whose whole meaning is "how much
+# of my life have I spent with you"); feeding affinity into the
+# mind's impulse steering instead (that say is already seniority-
+# bound and need-born; drifting toward familiar company when lonely
+# is the body's arithmetic, the branch that has always weighed
+# co-location); counting Aethel (she is not a denizen and never
+# enters a mind's present list — see ResidentMind.affinity).
+AFFINITY_STEP = 0.05
+AFFINITY_CAP = 0.5
 
 
 class Denizen:
@@ -207,7 +226,7 @@ class Denizen:
                 return self.work_options(placemap, tod=tod)
 
             options = [
-                (place, float(len(names)))
+                (place, self._company_weight(names))
                 for place, names in placemap.items()
                 if place != self.location and names
             ]
@@ -222,6 +241,22 @@ class Denizen:
         share = self.wander / len(self.hangouts) if self.hangouts else 0.0
         options.extend((h, share) for h in self.hangouts if h != self.location)
         return options
+
+    def _company_weight(self, names):
+        """How much one occupied place pulls a lonely resident (v0.64).
+
+        The headcount, as it has always been, plus the bond this
+        resident's mind holds with each person standing there. A
+        mindless resident (a parent, a standalone fixture) weighs the
+        headcount alone, bit-identical to every version before this
+        one. Pure arithmetic on persisted counts: no draws, so the
+        turn's single weighted choice keeps its shape."""
+        weight = float(len(names))
+        mind = getattr(self, "mind", None)
+        if mind is not None:
+            for name in names:
+                weight += min(AFFINITY_CAP, AFFINITY_STEP * mind.affinity(name))
+        return weight
 
     def turn(self, placemap, aethel_loc, rng=None, tod=None, n=None):
         """Advance needs and choose a destination; parent visits take precedence when active."""
