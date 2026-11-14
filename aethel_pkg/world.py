@@ -18,3 +18,11 @@ class World(ABC):
     @abstractmethod
     def random_place_name(self):
         """Draw a place name from the world’s persisted random stream."""
+
+    def weather(self, n):
+        """Return the world's weather at tick n, or None (v0.65).
+
+        Deliberately not abstract: a world with no sky (test stubs,
+        older towns) answers None and the organism simply never
+        notices weather, exactly as she lived before v0.65."""
+        return None

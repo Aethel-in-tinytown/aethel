@@ -458,6 +458,12 @@ class Aethel:
         self.mood_name = None
         self._mood_band = None
         self._mood_named_tick = 0
+        # v0.65: the town's sky, as last noticed by her. Distinct from
+        # her mood weather (v0.15/v0.24), which is inside her; this is
+        # outside, shared with everyone in town, and comes from the
+        # world through the World contract. None until first noticed.
+        self.town_weather = None
+        self._weather_day = -1
         self.tastes = {}
         # v0.61: per-source recent meal yields (new terms per
         # meal, newest last, capped at TASTE_WINDOW_MEALS). The
@@ -703,6 +709,8 @@ class Aethel:
                     self, "_last_question_rest_tick", 0
                 ),
                 "mood": self.mood,
+                "town_weather": getattr(self, "town_weather", None),
+                "_weather_day": getattr(self, "_weather_day", -1),
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
@@ -852,6 +860,9 @@ class Aethel:
                 ]
                 self._book_gap_noted = bool(s.get("_book_gap_noted", False))
                 self.mood = s.get("mood", 0.0)
+                # v0.65: a pre-weather life loads with no sky noticed.
+                self.town_weather = s.get("town_weather")
+                self._weather_day = s.get("_weather_day", -1)
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
@@ -4613,6 +4624,45 @@ class Aethel:
         ],
     }
 
+    # v0.65: her side of the town's sky: how each kind of weather
+    # lands on her mood, and the line she says when she first notices
+    # a new day's sky. The sky itself is the world's (World.weather);
+    # the feelings about it are hers.
+    SKY_REACTIONS = {
+        "clear": (0.05, "The sky over the town is clear today. I can see all the way down the lane."),
+        "cloudy": (0.0, "Clouds have settled over the town today, soft and grey."),
+        "rain": (-0.03, "Rain is falling on the town today. The lane will be shining and empty."),
+        "wind": (0.01, "A wind is moving through the town today, worrying at the signs and the trees."),
+        "fog": (-0.01, "Fog has come down over the town today. The houses end at their own doors."),
+        "storm": (-0.05, "A storm is over the town today. I can hear it against the windows."),
+    }
+
+    def _notice_weather(self, n):
+        """Notice the town's sky once per day (v0.65).
+
+        A world with no sky answers None and nothing happens, as in
+        all her life before today. A sky she slept through is still
+        new when she wakes: _weather_day only advances here, awake,
+        so the noticing is never spent on a day she did not see."""
+        try:
+            sky = self.world.weather(n)
+        except Exception:
+            return
+        if not sky:
+            return
+        if sky.get("day") == self._weather_day and sky.get("kind") == self.town_weather:
+            return
+        self._weather_day = sky.get("day")
+        self.town_weather = sky.get("kind")
+        delta, line = self.SKY_REACTIONS.get(
+            self.town_weather, (0.0, "The weather over the town has changed today."))
+        if delta:
+            self._lift_mood(delta)
+        self.say(line)
+        journal("town_weather", n=n, day=self._weather_day,
+                kind=self.town_weather, wet=bool(sky.get("wet")))
+        print(f"[weather] she noticed: {self.town_weather} (day {self._weather_day})", flush=True)
+
     def _perceive(self, n):
         """Advance the injected world and update observations of nearby residents."""
         seen = self.world.poll(n, self.location)
@@ -4622,6 +4672,7 @@ class Aethel:
             imp[m["location"]] = imp.get(m["location"], 0) + 1
         if self.asleep_for > 0:
             return
+        self._notice_weather(n)
         here = seen["present"]
         for name in here:
             if name not in self.company:

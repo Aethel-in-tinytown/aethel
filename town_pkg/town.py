@@ -23,6 +23,7 @@ from .mind_data import ROSTERS
 from .minds import ResidentMind
 from .places import PLACES
 from .residents import DAY_TICKS, Denizen, Parent, resident_from_dict
+from .weather import WET_WAIT_MULT, weather_for_day
 
 # Sociability gained by the route carrier and by each resident he meets.
 GOSSIP_LIFT = 0.10
@@ -166,6 +167,10 @@ class Town(World):
         self.rng = self.streams.stream("town")
         self.denizens = []
         self.next_turn = {}
+        # v0.65: the last sky this town announced (a diary record;
+        # the sky itself is derived, see weather.py).
+        self._weather_day = -1
+        self._weather_kind = None
         self.load()
         # Phase 2 (v0.50, D8): minds attach only behind the flag. With
         # the flag off nothing here runs: no mind objects, no mind
@@ -206,6 +211,8 @@ class Town(World):
                 "next_turn": self.next_turn,
                 "rng_streams": self.streams.dump(),
                 "denizens": [d.to_dict() for d in self.denizens],
+                "weather_day": self._weather_day,
+                "weather_kind": self._weather_kind,
             },
             stream="town",
         )
@@ -232,6 +239,11 @@ class Town(World):
                     if s.get("rng_streams"):
                         self.streams.restore(s["rng_streams"])
                     self.next_turn = s.get("next_turn", {})
+                    # Pre-v0.65 blobs carry no sky record: start at
+                    # -1 so the first poll announces today's derived
+                    # sky once, rather than backfilling a history.
+                    self._weather_day = s.get("weather_day", -1)
+                    self._weather_kind = s.get("weather_kind")
                     return
             except Exception:
                 pass
@@ -260,6 +272,13 @@ class Town(World):
     def random_place_name(self):
         return self.rng.choice(list(PLACES.values()))
 
+    def weather(self, n):
+        """The town's sky at tick n (v0.65): derived from seed + day.
+
+        Pure: consumes no stream draws, so asking about the sky can
+        never rewrite anyone's future choices."""
+        return weather_for_day(self.seed, int(n) // DAY_TICKS)
+
     def _gossip(self, carrier):
         """A delivery is a conversation: carrier and everyone present gain sociability."""
         present = [
@@ -280,6 +299,12 @@ class Town(World):
     def poll(self, n, observer_location):
         """Advance due resident turns and return moves plus names visible at the observer location."""
         moves = []
+        # v0.65: announce a changed sky once, in the town's own diary.
+        sky = self.weather(n)
+        if sky["day"] != self._weather_day or sky["kind"] != self._weather_kind:
+            self._weather_day = sky["day"]
+            self._weather_kind = sky["kind"]
+            self._log("weather", n=n, day=sky["day"], kind=sky["kind"], wet=sky["wet"])
         tod = n % DAY_TICKS
         placemap = {}
         for resident in self.denizens:
@@ -287,10 +312,10 @@ class Town(World):
         for resident in self.denizens:
             rng = self.streams.stream("schedule:" + resident.name)
             if resident.name not in self.next_turn:
-                self.next_turn[resident.name] = n + self._wait(rng)
+                self.next_turn[resident.name] = n + self._wait(rng, sky)
             if n < self.next_turn[resident.name]:
                 continue
-            self.next_turn[resident.name] = n + self._wait(rng)
+            self.next_turn[resident.name] = n + self._wait(rng, sky)
             moved = resident.turn(
                 placemap, observer_location, rng=self.rng, tod=tod, n=n
             )
@@ -335,13 +360,19 @@ class Town(World):
         return {"moves": moves, "present": present}
 
     @staticmethod
-    def _wait(rng):
+    def _wait(rng, sky=None):
         """Gamma(shape=2, scale=1.5) waits, quantized to positive ticks.
 
         Two exponential variates avoid platform-specific distribution helpers.
         Named streams keep each resident's schedule independent of roster order.
+        v0.65: in wet weather the drawn wait is stretched by
+        WET_WAIT_MULT (residents linger indoors). Arithmetic on the
+        drawn value only; the stream sees exactly two draws either way.
         """
         sample = -1.5 * (
             math.log(max(rng.random(), 2**-64)) + math.log(max(rng.random(), 2**-64))
         )
-        return max(1, int(sample + 0.5))
+        wait = max(1, int(sample + 0.5))
+        if sky and sky.get("wet"):
+            wait = max(1, int(wait * WET_WAIT_MULT + 0.5))
+        return wait
