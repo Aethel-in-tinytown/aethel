@@ -464,6 +464,12 @@ class Aethel:
         # world through the World contract. None until first noticed.
         self.town_weather = None
         self._weather_day = -1
+        # v0.66: her climate memory — every sky she has noticed,
+        # accumulated. v0.65 gave her only today's sky; this is the
+        # record of all of them (counts, wet days, streaks, first
+        # sightings), so the town's weather becomes part of her past,
+        # not just her present. See _record_weather.
+        self.weather_memory = self._empty_climate()
         self.tastes = {}
         # v0.61: per-source recent meal yields (new terms per
         # meal, newest last, capped at TASTE_WINDOW_MEALS). The
@@ -711,6 +717,9 @@ class Aethel:
                 "mood": self.mood,
                 "town_weather": getattr(self, "town_weather", None),
                 "_weather_day": getattr(self, "_weather_day", -1),
+                # v0.66: the climate memory round-trips — a restart
+                # must not make her forget every sky before today.
+                "weather_memory": self._climate(),
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
@@ -863,6 +872,14 @@ class Aethel:
                 # v0.65: a pre-weather life loads with no sky noticed.
                 self.town_weather = s.get("town_weather")
                 self._weather_day = s.get("_weather_day", -1)
+                # v0.66: a pre-climate life loads with an empty
+                # memory and starts counting from the next sky she
+                # notices. Deliberately NOT backfilled from her one
+                # standing town_weather: a single day is not a
+                # climate, and inventing counts she never kept
+                # would be confabulation, not memory.
+                self.weather_memory = self._normalise_climate(
+                    s.get("weather_memory"))
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
@@ -4637,6 +4654,102 @@ class Aethel:
         "storm": (-0.05, "A storm is over the town today. I can hear it against the windows."),
     }
 
+    # v0.66: climate memory. Argument for counting over deriving:
+    # the town's sky is a pure function of (seed, day), so a climate
+    # could in principle be recomputed — but her memory is not the
+    # town's archive. She only knows the skies she was awake to
+    # notice, in the order she noticed them, and a day slept through
+    # entirely is a day her climate honestly lacks. Counting at the
+    # noticing (the one place a sky enters her experience) keeps the
+    # record autobiographical. No seeded draws: bookkeeping beside
+    # the noticing, so restart fidelity is untouched. Rejected:
+    # backfilling from the pure function at load (invents a past
+    # she never lived); a decaying window (a climate is a lifetime
+    # tally, like her impressions of people — the recent window
+    # shape belongs to taste, where the verdict must stay current).
+    @staticmethod
+    def _empty_climate():
+        return {"counts": {}, "total_days": 0, "wet_days": 0,
+                "first_seen": {}, "last_seen_day": {},
+                "streak_kind": None, "streak_len": 0,
+                "longest_streak_kind": None, "longest_streak_len": 0}
+
+    @classmethod
+    def _normalise_climate(cls, raw):
+        mem = cls._empty_climate()
+        if not isinstance(raw, dict):
+            return mem
+        for k in ("counts", "first_seen", "last_seen_day"):
+            if isinstance(raw.get(k), dict):
+                mem[k] = {str(a): int(b) for a, b in raw[k].items()
+                          if isinstance(b, (int, float))}
+        for k in ("total_days", "wet_days", "streak_len",
+                  "longest_streak_len"):
+            if isinstance(raw.get(k), (int, float)):
+                mem[k] = int(raw[k])
+        for k in ("streak_kind", "longest_streak_kind"):
+            if isinstance(raw.get(k), str):
+                mem[k] = raw[k]
+        return mem
+
+    def _climate(self):
+        return self._normalise_climate(
+            getattr(self, "weather_memory", None))
+
+    def climate_commonest(self):
+        """Her most-seen sky, or None before she has noticed any.
+
+        Ties go to the kind seen first (first_seen day order), the
+        same first-counted tie rule her residents' closest_company
+        uses — the earliest bond wins, not the alphabet."""
+        mem = self._climate()
+        if not mem["counts"]:
+            return None
+        return min(mem["counts"],
+                   key=lambda k: (-mem["counts"][k],
+                                  mem["first_seen"].get(k, 1 << 30), k))
+
+    def _record_weather(self, sky):
+        """Fold one noticed sky into her climate memory (v0.66).
+
+        Called only from _notice_weather, which already guarantees
+        once-per-day, awake. Returns a note dict describing what
+        was remarkable about this sky in her climate: a first
+        sighting, or a streak reaching CLIMATE_STREAK_NOTICE."""
+        kind = sky.get("kind")
+        day = sky.get("day")
+        mem = self._climate()
+        first = kind not in mem["counts"]
+        if first:
+            mem["first_seen"][kind] = day
+        mem["counts"][kind] = mem["counts"].get(kind, 0) + 1
+        mem["last_seen_day"][kind] = day
+        mem["total_days"] += 1
+        if sky.get("wet"):
+            mem["wet_days"] += 1
+        if mem["streak_kind"] == kind:
+            mem["streak_len"] += 1
+        else:
+            mem["streak_kind"] = kind
+            mem["streak_len"] = 1
+        if mem["streak_len"] > mem["longest_streak_len"]:
+            mem["longest_streak_len"] = mem["streak_len"]
+            mem["longest_streak_kind"] = kind
+        self.weather_memory = mem
+        return {"first": first, "streak_len": mem["streak_len"],
+                "total_days": mem["total_days"]}
+
+    CLIMATE_STREAK_NOTICE = 3
+
+    CLIMATE_FIRST_LINES = {
+        "rain": "Rain, and I have no memory of rain over this town before. Now I do.",
+        "storm": "A storm, the first I have known over this town. I will remember the sound of it.",
+        "fog": "Fog, the first I have known here. The town can disappear; I did not know that until today.",
+        "wind": "Wind, the first I have known here that had the whole town in it.",
+        "cloudy": "Clouds, the first I have kept count of. Even a grey sky is a day I was here for.",
+        "clear": "A clear sky, the first I have kept count of. This is where my remembering of the weather starts.",
+    }
+
     def _notice_weather(self, n):
         """Notice the town's sky once per day (v0.65).
 
@@ -4662,6 +4775,28 @@ class Aethel:
         journal("town_weather", n=n, day=self._weather_day,
                 kind=self.town_weather, wet=bool(sky.get("wet")))
         print(f"[weather] she noticed: {self.town_weather} (day {self._weather_day})", flush=True)
+        # v0.66: the noticing becomes a memory. Remarkable skies
+        # get their own journal row and, for a first sighting or a
+        # streak reaching the notice length, a spoken line — the
+        # same journal-on-change discipline as taste: an ordinary
+        # day adds a count and says nothing extra.
+        note = self._record_weather(sky)
+        if note["first"]:
+            journal("climate", n=n, day=self._weather_day,
+                    kind=self.town_weather, note="first",
+                    total_days=note["total_days"])
+            self.say(self.CLIMATE_FIRST_LINES.get(
+                self.town_weather,
+                f"{self.town_weather.capitalize()}, the first I have kept count of."))
+        elif note["streak_len"] == self.CLIMATE_STREAK_NOTICE:
+            journal("climate", n=n, day=self._weather_day,
+                    kind=self.town_weather, note="streak",
+                    streak_len=note["streak_len"],
+                    total_days=note["total_days"])
+            self.say(
+                f"That is {note['streak_len']} days of {self.town_weather} "
+                f"over the town, one after another. I have started to "
+                f"expect it when I wake.")
 
     def _perceive(self, n):
         """Advance the injected world and update observations of nearby residents."""

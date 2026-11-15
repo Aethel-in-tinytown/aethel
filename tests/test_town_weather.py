@@ -104,11 +104,13 @@ class TestSheNotices(unittest.TestCase):
         self.assertEqual(a.town_weather, "rain")
         self.assertEqual(a._weather_day, 3)
         self.assertLess(a.mood, 0.0)  # rain lands at -0.03 on her mood
-        self.assertEqual(len(self.said), 1)
+        # v0.66: a first-ever sky also gets its climate first-sighting
+        # line, so the noticing speaks twice, not once.
+        self.assertEqual(len(self.said), 2)
         mood1 = a.mood
         a._notice_weather(9001)
         self.assertEqual(a.mood, mood1)
-        self.assertEqual(len(self.said), 1)
+        self.assertEqual(len(self.said), 2)
 
     def test_new_day_new_sky_is_noticed_again(self):
         a = self.build(SkyWorld())
@@ -117,7 +119,10 @@ class TestSheNotices(unittest.TestCase):
         a._notice_weather(12000)
         self.assertEqual(a.town_weather, "clear")
         self.assertEqual(a._weather_day, 4)
-        self.assertEqual(len(self.said), 2)
+        # v0.66: rain and clear are both first sightings in this
+        # life, so each noticing speaks its sky line plus a
+        # first-sighting line: 4 lines in all.
+        self.assertEqual(len(self.said), 4)
 
 
 if __name__ == "__main__":
