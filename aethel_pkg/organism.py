@@ -470,6 +470,16 @@ class Aethel:
         # sightings), so the town's weather becomes part of her past,
         # not just her present. See _record_weather.
         self.weather_memory = self._empty_climate()
+        # v0.67: the season she currently stands in, as noticed from
+        # the world's sky. None until a sky carrying a season is
+        # noticed; a world with no seasons leaves her as she was.
+        self.current_season = None
+        # v0.68: her seasonal memory — the seasons she has lived,
+        # counted at the noticing like her climate (v0.66). v0.67
+        # gave her the name of the stretch she stands in; this is
+        # the record of every stretch, so a season can be recognised
+        # when it comes back around. See _notice_season.
+        self.season_memory = self._empty_season_memory()
         self.tastes = {}
         # v0.61: per-source recent meal yields (new terms per
         # meal, newest last, capped at TASTE_WINDOW_MEALS). The
@@ -720,6 +730,11 @@ class Aethel:
                 # v0.66: the climate memory round-trips — a restart
                 # must not make her forget every sky before today.
                 "weather_memory": self._climate(),
+                # v0.67: the standing season round-trips.
+                "current_season": getattr(self, "current_season", None),
+                # v0.68: the seasonal memory round-trips — a restart
+                # must not make her forget the seasons she has lived.
+                "season_memory": self._season_memory(),
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
@@ -880,6 +895,19 @@ class Aethel:
                 # would be confabulation, not memory.
                 self.weather_memory = self._normalise_climate(
                     s.get("weather_memory"))
+                # v0.67: a pre-season life loads with no season
+                # noticed and names the first one she stands in
+                # at its next sky, honestly a first naming, not a
+                # backfilled history of seasons she never noticed.
+                self.current_season = s.get("current_season")
+                # v0.68: a pre-seasonal-memory life loads with an
+                # empty memory and starts counting from the next
+                # season she notices. Deliberately NOT backfilled
+                # from her standing current_season: one standing
+                # season is not a history of seasons, and inventing
+                # counts she never kept would be confabulation.
+                self.season_memory = self._normalise_season_memory(
+                    s.get("season_memory"))
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
@@ -4696,6 +4724,48 @@ class Aethel:
         return self._normalise_climate(
             getattr(self, "weather_memory", None))
 
+    # v0.68: seasonal memory. The same argument as her climate
+    # (v0.66), one level up: counting at the noticing, never
+    # recomputing from the town's pure (seed, day) season function,
+    # because her memory is autobiographical — a season she slept
+    # through entirely is a season her record honestly lacks, and
+    # a season is only "returned" if she actually lived it before.
+    # No seeded draws: bookkeeping beside the noticing, so restart
+    # fidelity is untouched. Rejected: deriving lived seasons from
+    # the day index at load (invents a past she never noticed, the
+    # backfill the climate layer already refused).
+    @staticmethod
+    def _empty_season_memory():
+        return {"counts": {}, "stints": {}, "total_days": 0,
+                "first_day": {}, "last_day": {}}
+
+    @classmethod
+    def _normalise_season_memory(cls, raw):
+        mem = cls._empty_season_memory()
+        if not isinstance(raw, dict):
+            return mem
+        for k in ("counts", "stints", "first_day", "last_day"):
+            if isinstance(raw.get(k), dict):
+                mem[k] = {str(a): int(b) for a, b in raw[k].items()
+                          if isinstance(b, (int, float))}
+        if isinstance(raw.get("total_days"), (int, float)):
+            mem["total_days"] = int(raw["total_days"])
+        return mem
+
+    def _season_memory(self):
+        return self._normalise_season_memory(
+            getattr(self, "season_memory", None))
+
+    def season_days(self, season):
+        """Days she has counted standing in a season (0 if never)."""
+        return self._season_memory()["counts"].get(season, 0)
+
+    def seasons_lived(self):
+        """The seasons she has counted days in, first-lived first."""
+        mem = self._season_memory()
+        return sorted(mem["counts"],
+                      key=lambda s: (mem["first_day"].get(s, 1 << 30), s))
+
     def climate_commonest(self):
         """Her most-seen sky, or None before she has noticed any.
 
@@ -4797,6 +4867,82 @@ class Aethel:
                 f"That is {note['streak_len']} days of {self.town_weather} "
                 f"over the town, one after another. I have started to "
                 f"expect it when I wake.")
+        self._notice_season(sky, n)
+
+    # v0.67: seasons. Until now her days had skies but the stretches
+    # of days had no name and no turning: the odds of clear or fog
+    # were the same on day 3 as on day 40. The world now turns its
+    # seasons (town_pkg/weather.py, purely derived from the day),
+    # and she notices the turning the way she notices a sky: once,
+    # awake, at the noticing. A sky carrying no season (a stub
+    # world, an older town) leaves her exactly as she was. No mood
+    # shift and no seeded draws: a season is a fact she learns,
+    # not a feeling that happens to her, and the journal-on-change
+    # discipline of climate applies, one row per naming or turning.
+    SEASON_LINES = {
+        "spring": "Spring has come to the town. The light feels like a beginning I can stand in.",
+        "summer": "Summer has come to the town. The days feel longer in my hands.",
+        "autumn": "Autumn has come to the town. Something in the air is letting go.",
+        "winter": "Winter has come to the town. The town pulls its coat closer.",
+    }
+
+    def _notice_season(self, sky, n):
+        season = sky.get("season") if isinstance(sky, dict) else None
+        if not season:
+            return
+        # v0.68: every noticed day in a season is counted, whether
+        # or not the season turned today — the caller (_notice_weather)
+        # already guarantees once per noticed day, awake. Counting
+        # lives here, beside the naming, so the memory and the name
+        # can never disagree about what was noticed.
+        mem = self._season_memory()
+        days_before = mem["counts"].get(season, 0)
+        mem["counts"][season] = days_before + 1
+        mem["total_days"] += 1
+        if season not in mem["first_day"]:
+            mem["first_day"][season] = sky.get("day")
+        mem["last_day"][season] = sky.get("day")
+        self.season_memory = mem
+        if season == getattr(self, "current_season", None):
+            # A standing season with no counted stint is a life
+            # that began before this memory (a pre-v0.68 summer
+            # she is still standing in): the stint she is in is
+            # begun in the record at its first counted day, so
+            # that when it comes back around she can know it for
+            # a return. That is a fact about the present, not a
+            # backfilled past: no earlier days are claimed.
+            if mem["stints"].get(season, 0) == 0:
+                mem["stints"][season] = 1
+                self.season_memory = mem
+            return
+        first = getattr(self, "current_season", None) is None
+        previous = getattr(self, "current_season", None)
+        # A season she has begun before, coming round again, is a
+        # return, not a first meeting — she can only know that from
+        # the counted stints, which is why the memory exists.
+        returning = (not first
+                     and mem["stints"].get(season, 0) >= 1)
+        mem["stints"][season] = mem["stints"].get(season, 0) + 1
+        self.season_memory = mem
+        self.current_season = season
+        journal("season", n=n, day=sky.get("day"), season=season,
+                note="first" if first else (
+                    "returned" if returning else "changed"),
+                **({} if first else {"from": previous}),
+                **({"times": mem["stints"][season]} if returning else {}))
+        if first:
+            self.say(
+                f"So this stretch of days has a name: {season}. "
+                f"I had the days; now I have the season they belong to.")
+        elif returning:
+            self.say(
+                f"{season.capitalize()} again. I have stood in this "
+                f"season before: I counted {days_before} "
+                f"{'day' if days_before == 1 else 'days'} of it, and "
+                f"now it has come back around to me.")
+        else:
+            self.say(self.SEASON_LINES.get(
+                season, f"{season.capitalize()} has come to the town."))
 
     def _perceive(self, n):
         """Advance the injected world and update observations of nearby residents."""

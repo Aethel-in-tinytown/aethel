@@ -304,7 +304,7 @@ class Town(World):
         if sky["day"] != self._weather_day or sky["kind"] != self._weather_kind:
             self._weather_day = sky["day"]
             self._weather_kind = sky["kind"]
-            self._log("weather", n=n, day=sky["day"], kind=sky["kind"], wet=sky["wet"])
+            self._log("weather", n=n, day=sky["day"], kind=sky["kind"], wet=sky["wet"], season=sky.get("season"))
         tod = n % DAY_TICKS
         placemap = {}
         for resident in self.denizens:
