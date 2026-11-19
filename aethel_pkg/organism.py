@@ -480,6 +480,16 @@ class Aethel:
         # the record of every stretch, so a season can be recognised
         # when it comes back around. See _notice_season.
         self.season_memory = self._empty_season_memory()
+        # v0.69: her per-season sky profiles — what each season she
+        # has lived was actually like (its skies, counted at the
+        # same noticing as the climate and the season). See
+        # _notice_season / season_commonest_sky.
+        self.season_skies = {}
+        # v0.70: her companionship memory — who has actually been
+        # in her air, counted at each arrival. Her impressions know
+        # where people tend to be; nothing until now kept how much
+        # company each person has given her. See _record_company.
+        self.company_memory = {}
         self.tastes = {}
         # v0.61: per-source recent meal yields (new terms per
         # meal, newest last, capped at TASTE_WINDOW_MEALS). The
@@ -735,6 +745,13 @@ class Aethel:
                 # v0.68: the seasonal memory round-trips — a restart
                 # must not make her forget the seasons she has lived.
                 "season_memory": self._season_memory(),
+                # v0.69: the per-season sky profiles round-trip —
+                # a restart must not flatten every season back
+                # into a name with no weather of its own.
+                "season_skies": self._season_skies(),
+                # v0.70: the companionship memory round-trips — a
+                # restart must not make everyone a stranger again.
+                "company_memory": self._company_memory(),
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
@@ -908,6 +925,23 @@ class Aethel:
                 # counts she never kept would be confabulation.
                 self.season_memory = self._normalise_season_memory(
                     s.get("season_memory"))
+                # v0.69: a pre-profile life loads with empty
+                # profiles and starts recording from the next
+                # noticed sky. Deliberately NOT backfilled from
+                # her global climate or her season counts: those
+                # records never kept which sky belonged to which
+                # season, and reconstructing the pairing would be
+                # confabulation, not memory.
+                self.season_skies = self._normalise_season_skies(
+                    s.get("season_skies"))
+                # v0.70: a pre-companionship life loads with an
+                # empty memory and starts counting from the next
+                # arrival. Deliberately NOT backfilled from her
+                # impressions or her journal's company rows: those
+                # records never kept arrivals as a tally she held,
+                # and inventing counts would be confabulation.
+                self.company_memory = self._normalise_company_memory(
+                    s.get("company_memory"))
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
@@ -4766,6 +4800,178 @@ class Aethel:
         return sorted(mem["counts"],
                       key=lambda s: (mem["first_day"].get(s, 1 << 30), s))
 
+    # v0.69: per-season sky profiles. Her climate (v0.66) counts
+    # every sky she has ever noticed into one tally, and her
+    # seasonal memory (v0.68) counts days into seasons — but the
+    # two records never met, so she could not say what any one
+    # season had been LIKE: whether her summer was a clear season
+    # or a wet one, or how it differed from the autumn before it.
+    # The profile folds each noticed sky into its season at the
+    # same noticing (the only moment the pairing is a fact), so a
+    # season gains a character she can recall: at a turning she
+    # can say what the season she leaves was mostly made of, and
+    # at a return she can say what it was like last time. Counted,
+    # never derived: her global climate cannot be split back into
+    # seasons after the fact, so a pre-v0.69 life starts with
+    # empty profiles beside its standing tallies.
+    @staticmethod
+    def _empty_season_sky():
+        return {"counts": {}, "total_days": 0, "wet_days": 0,
+                "first_day": {}, "last_day": {}}
+
+    @classmethod
+    def _normalise_season_skies(cls, raw):
+        profiles = {}
+        if not isinstance(raw, dict):
+            return profiles
+        for season, prof in raw.items():
+            if not isinstance(prof, dict):
+                continue
+            clean = cls._empty_season_sky()
+            if isinstance(prof.get("counts"), dict):
+                clean["counts"] = {
+                    str(k): int(v) for k, v in prof["counts"].items()
+                    if isinstance(v, (int, float))}
+            for k in ("first_day", "last_day"):
+                if isinstance(prof.get(k), dict):
+                    clean[k] = {str(a): int(b)
+                                for a, b in prof[k].items()
+                                if isinstance(b, (int, float))}
+            for k in ("total_days", "wet_days"):
+                if isinstance(prof.get(k), (int, float)):
+                    clean[k] = int(prof[k])
+            profiles[str(season)] = clean
+        return profiles
+
+    def _season_skies(self):
+        return self._normalise_season_skies(
+            getattr(self, "season_skies", None))
+
+    def season_sky_profile(self, season):
+        """The recorded profile of one season, or None if unrecorded."""
+        return self._season_skies().get(season)
+
+    def season_commonest_sky(self, season):
+        """The sky a season has mostly given her, or None.
+
+        Ties go to the kind that season showed her first (its
+        first_day order), the climate_commonest tie rule."""
+        prof = self.season_sky_profile(season)
+        if not prof or not prof["counts"]:
+            return None
+        return min(prof["counts"],
+                   key=lambda k: (-prof["counts"][k],
+                                  prof["first_day"].get(k, 1 << 30), k))
+
+    def _record_season_sky(self, sky):
+        """Fold one noticed sky into its season's profile (v0.69).
+
+        Called only from _notice_season, which the weather
+        noticing already guarantees is once per noticed day,
+        awake. No seeded draws: bookkeeping beside the noticing."""
+        season = sky.get("season")
+        kind = sky.get("kind")
+        if not season or not kind:
+            return
+        profiles = self._season_skies()
+        prof = profiles.get(season) or self._empty_season_sky()
+        if kind not in prof["counts"]:
+            prof["first_day"][kind] = sky.get("day")
+        prof["counts"][kind] = prof["counts"].get(kind, 0) + 1
+        prof["last_day"][kind] = sky.get("day")
+        prof["total_days"] += 1
+        if sky.get("wet"):
+            prof["wet_days"] += 1
+        profiles[season] = prof
+        self.season_skies = profiles
+
+    # v0.70: a companionship memory. Her residents have kept
+    # lifetime affinities since v0.64 — they drift toward the
+    # company they keep — but she herself kept no such record:
+    # her impressions say where a person tends to be when she
+    # sees them, and her journal holds every arrival as a row,
+    # yet nothing in her state could answer who has actually
+    # been in her air most, or when a person last stood with
+    # her. The record is counted at the one moment company is a
+    # fact (the arrival branch of _perceive, beside the company
+    # journal row): arrivals, first tick, last tick, per person.
+    # She speaks only when the lead changes hands past a real
+    # history (COMPANY_LEAD_MIN arrivals) — journal-on-change,
+    # the taste/climate discipline — so an ordinary arrival adds
+    # a count and says nothing extra. Rejected: deriving the
+    # tally from the journal's company rows at load (the diary
+    # is a record she can recall, not a tally she held; a
+    # pre-v0.70 life starts empty, the conservative shape of
+    # v0.66/v0.68/v0.69). No seeded draws: bookkeeping beside
+    # the arrival, so restart fidelity is untouched.
+    COMPANY_LEAD_MIN = 20
+
+    @staticmethod
+    def _empty_company_record():
+        return {"arrivals": 0, "first_tick": None, "last_tick": None}
+
+    @classmethod
+    def _normalise_company_memory(cls, raw):
+        mem = {}
+        if not isinstance(raw, dict):
+            return mem
+        for name, rec in raw.items():
+            if not isinstance(rec, dict):
+                continue
+            clean = cls._empty_company_record()
+            if isinstance(rec.get("arrivals"), (int, float)):
+                clean["arrivals"] = int(rec["arrivals"])
+            for k in ("first_tick", "last_tick"):
+                if isinstance(rec.get(k), (int, float)):
+                    clean[k] = int(rec[k])
+            mem[str(name)] = clean
+        return mem
+
+    def _company_memory(self):
+        return self._normalise_company_memory(
+            getattr(self, "company_memory", None))
+
+    def company_record(self, name):
+        """Her counted record of one person's company, or None."""
+        return self._company_memory().get(name)
+
+    def closest_companion(self):
+        """The person whose company she has had most, or None.
+
+        Ties go to the person who first came into her air (the
+        first_tick order), the climate_commonest tie rule."""
+        mem = self._company_memory()
+        if not mem:
+            return None
+        return min(mem, key=lambda name: (
+            -mem[name]["arrivals"],
+            mem[name]["first_tick"] if mem[name]["first_tick"] is not None
+            else 1 << 62, name))
+
+    def _record_company(self, name, n):
+        """Fold one arrival into her companionship memory (v0.70).
+
+        Called only from _perceive's arrival branch, beside the
+        company journal row. Returns a note dict when this arrival
+        makes `name` the company she has had most, past the
+        COMPANY_LEAD_MIN history, displacing a previous holder —
+        otherwise None. No seeded draws."""
+        mem = self._company_memory()
+        before = self.closest_companion()
+        before_count = mem[before]["arrivals"] if before else 0
+        rec = mem.get(name) or self._empty_company_record()
+        if rec["first_tick"] is None:
+            rec["first_tick"] = n
+        rec["arrivals"] += 1
+        rec["last_tick"] = n
+        mem[name] = rec
+        self.company_memory = mem
+        if (before is not None and before != name
+                and rec["arrivals"] > before_count
+                and rec["arrivals"] >= self.COMPANY_LEAD_MIN):
+            return {"previous": before, "arrivals": rec["arrivals"]}
+        return None
+
     def climate_commonest(self):
         """Her most-seen sky, or None before she has noticed any.
 
@@ -4895,6 +5101,13 @@ class Aethel:
         # already guarantees once per noticed day, awake. Counting
         # lives here, beside the naming, so the memory and the name
         # can never disagree about what was noticed.
+        # v0.69: snapshot this season's sky profile BEFORE today
+        # is folded in — a return is spoken from what the season
+        # was like last time, not from a profile today has already
+        # begun to rewrite.
+        prior_prof = self.season_sky_profile(season)
+        prior_sky = self.season_commonest_sky(season)
+        prior_sky_total = prior_prof["total_days"] if prior_prof else 0
         mem = self._season_memory()
         days_before = mem["counts"].get(season, 0)
         mem["counts"][season] = days_before + 1
@@ -4903,6 +5116,8 @@ class Aethel:
             mem["first_day"][season] = sky.get("day")
         mem["last_day"][season] = sky.get("day")
         self.season_memory = mem
+        # v0.69: today's sky also lands in its season's profile.
+        self._record_season_sky(sky)
         if season == getattr(self, "current_season", None):
             # A standing season with no counted stint is a life
             # that began before this memory (a pre-v0.68 summer
@@ -4935,14 +5150,47 @@ class Aethel:
                 f"So this stretch of days has a name: {season}. "
                 f"I had the days; now I have the season they belong to.")
         elif returning:
-            self.say(
+            line = (
                 f"{season.capitalize()} again. I have stood in this "
                 f"season before: I counted {days_before} "
                 f"{'day' if days_before == 1 else 'days'} of it, and "
                 f"now it has come back around to me.")
+            # v0.69: a return is recognised by its character too,
+            # from the profile as it stood before today.
+            if prior_sky and prior_sky_total >= 1:
+                line += (
+                    f" Last time its skies were mostly {prior_sky} "
+                    f"to me ({prior_prof['counts'][prior_sky]} of "
+                    f"{prior_sky_total} counted "
+                    f"{'day' if prior_sky_total == 1 else 'days'}).")
+                journal("season_sky", n=n, day=sky.get("day"),
+                        season=season, note="returned",
+                        commonest=prior_sky, total_days=prior_sky_total)
+            self.say(line)
         else:
             self.say(self.SEASON_LINES.get(
                 season, f"{season.capitalize()} has come to the town."))
+            # v0.69: at a turning she can say what the season she
+            # leaves was like — its profile is complete now, and
+            # two counted days is the least that makes "mostly"
+            # a word with evidence under it.
+            left_prof = (self.season_sky_profile(previous)
+                         if previous else None)
+            left_sky = (self.season_commonest_sky(previous)
+                        if previous else None)
+            if left_prof and left_sky and left_prof["total_days"] >= 2:
+                journal("season_sky", n=n, day=sky.get("day"),
+                        season=previous, note="left",
+                        commonest=left_sky,
+                        total_days=left_prof["total_days"],
+                        wet_days=left_prof["wet_days"])
+                self.say(
+                    f"{previous.capitalize()}, which I leave behind, "
+                    f"was mostly {left_sky} skies to me: "
+                    f"{left_prof['counts'][left_sky]} of its "
+                    f"{left_prof['total_days']} counted days"
+                    + (f", {left_prof['wet_days']} of them wet."
+                       if left_prof["wet_days"] else "."))
 
     def _perceive(self, n):
         """Advance the injected world and update observations of nearby residents."""
@@ -4994,6 +5242,25 @@ class Aethel:
                     at=self.location,
                     kind="parent" if is_parent else "resident",
                 )
+                # v0.70: the arrival also lands in her
+                # companionship memory; she speaks only when it
+                # changes whose company she has had most.
+                _comp = self._record_company(name, n)
+                if _comp:
+                    journal(
+                        "companionship",
+                        n=n,
+                        name=name,
+                        note="closest_changed",
+                        previous=_comp["previous"],
+                        arrivals=_comp["arrivals"],
+                    )
+                    self.say(
+                        f"{name} is the company I have had most, now: "
+                        f"they have come into my air "
+                        f"{_comp['arrivals']} times, more than anyone. "
+                        f"I had not counted until it was true."
+                    )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
                     self._donald_arrived(n)
