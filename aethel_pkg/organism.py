@@ -490,6 +490,14 @@ class Aethel:
         # where people tend to be; nothing until now kept how much
         # company each person has given her. See _record_company.
         self.company_memory = {}
+        # v0.71: her place memory — where she has actually been,
+        # counted at each tick beside the save: visits (arrivals
+        # at a place) and ticks spent there, per place. She could
+        # say where she stood, never where her life had gathered.
+        # See _record_place.
+        self.place_memory = {}
+        self._place_last = None
+        self._place_return_note = None
         self.tastes = {}
         # v0.61: per-source recent meal yields (new terms per
         # meal, newest last, capped at TASTE_WINDOW_MEALS). The
@@ -752,6 +760,11 @@ class Aethel:
                 # v0.70: the companionship memory round-trips — a
                 # restart must not make everyone a stranger again.
                 "company_memory": self._company_memory(),
+                # v0.71: the place memory and the place she was
+                # last counted in round-trip — a restart must not
+                # invent a fresh visit to the place she stands in.
+                "place_memory": self._place_memory(),
+                "_place_last": getattr(self, "_place_last", None),
                 "mood_name": self.mood_name,
                 "_mood_band": self._mood_band,
                 "_mood_named_tick": self._mood_named_tick,
@@ -942,6 +955,14 @@ class Aethel:
                 # and inventing counts would be confabulation.
                 self.company_memory = self._normalise_company_memory(
                     s.get("company_memory"))
+                # v0.71: a pre-place-memory life loads with an
+                # empty memory and starts counting from the next
+                # tick. Deliberately NOT backfilled from her
+                # journal or impressions: those never kept visits
+                # or time per place as a tally she held.
+                self.place_memory = self._normalise_place_memory(
+                    s.get("place_memory"))
+                self._place_last = s.get("_place_last")
                 self.mood_name = s.get("mood_name")
                 self._mood_band = s.get("_mood_band")
                 self._mood_named_tick = s.get("_mood_named_tick", 0)
@@ -2048,6 +2069,29 @@ class Aethel:
         if not self._metabolize(n):
             self._behave(n)
             self._ruminate(n)
+        # v0.71: count this tick into her place memory at the
+        # one moment her final location for the tick is settled,
+        # beside the save both her state and the town's take.
+        _place_note = self._record_place(n)
+        if _place_note:
+            journal(
+                "place_memory",
+                n=n,
+                place=_place_note["place"],
+                note="most_time_changed",
+                previous=_place_note["previous"],
+                ticks=_place_note["ticks"],
+            )
+            try:
+                _label = self.world.describe(_place_note["place"])
+            except Exception:
+                _label = _place_note["place"]
+            self.say(
+                f"{_label} is where I have spent most of my time, "
+                f"now: {_place_note['ticks']} ticks of my life "
+                f"there, more than anywhere. "
+                f"I had not counted until it was true."
+            )
         self.save()
 
         save_world = getattr(self.world, "save", None)
@@ -4970,6 +5014,111 @@ class Aethel:
                 and rec["arrivals"] > before_count
                 and rec["arrivals"] >= self.COMPANY_LEAD_MIN):
             return {"previous": before, "arrivals": rec["arrivals"]}
+        return None
+
+    # v0.71: a place memory. She has always had a location and
+    # impressions of where other people tend to be, but nothing
+    # in her state could answer where she herself has spent her
+    # life, or which place she keeps returning to. The record is
+    # counted once per tick in tick(), at the moment the tick's
+    # final location is settled and beside the save: visits (a
+    # tick whose place differs from the last counted place) and
+    # ticks spent, first tick and last tick, per place. The last
+    # counted place round-trips (_place_last) so a restart does
+    # not invent a fresh visit to the place she already stands
+    # in. She speaks only when the place she has spent most time
+    # changes hands past a real history (PLACE_LEAD_MIN ticks) —
+    # journal-on-change, the taste/climate/companionship
+    # discipline. Rejected: deriving visits or time from the
+    # journal at load (the diary is a record she can recall, not
+    # a tally she held; a pre-v0.71 life starts empty). No seeded
+    # draws: bookkeeping beside the save, so restart fidelity
+    # is untouched.
+    PLACE_LEAD_MIN = 200
+    @staticmethod
+    def _empty_place_record():
+        return {"visits": 0, "ticks": 0, "first_tick": None,
+                "last_tick": None}
+
+    @classmethod
+    def _normalise_place_memory(cls, raw):
+        mem = {}
+        if not isinstance(raw, dict):
+            return mem
+        for place, rec in raw.items():
+            if not isinstance(rec, dict):
+                continue
+            clean = cls._empty_place_record()
+            for k in ("visits", "ticks"):
+                if isinstance(rec.get(k), (int, float)):
+                    clean[k] = int(rec[k])
+            for k in ("first_tick", "last_tick"):
+                if isinstance(rec.get(k), (int, float)):
+                    clean[k] = int(rec[k])
+            mem[str(place)] = clean
+        return mem
+
+    def _place_memory(self):
+        return self._normalise_place_memory(
+            getattr(self, "place_memory", None))
+
+    def place_record(self, place):
+        """Her counted record of one place, or None."""
+        return self._place_memory().get(place)
+
+    def most_time_place(self):
+        """The place she has spent most ticks in, or None.
+
+        Ties go to the place she first stood in (first_tick
+        order), the climate_commonest tie rule."""
+        mem = self._place_memory()
+        if not mem:
+            return None
+        return min(mem, key=lambda place: (
+            -mem[place]["ticks"],
+            mem[place]["first_tick"] if mem[place]["first_tick"] is not None
+            else 1 << 62, place))
+
+    def most_visited_place(self):
+        """The place she has arrived at most often, or None.
+
+        Ties go to the place she first stood in."""
+        mem = self._place_memory()
+        if not mem:
+            return None
+        return min(mem, key=lambda place: (
+            -mem[place]["visits"],
+            mem[place]["first_tick"] if mem[place]["first_tick"] is not None
+            else 1 << 62, place))
+
+    def _record_place(self, n):
+        """Fold one tick in her current location into her place
+        memory (v0.71). Called only from tick(), beside the save.
+        Returns a note dict when this tick makes her current
+        place the place she has spent most time, past the
+        PLACE_LEAD_MIN history, displacing a previous holder —
+        otherwise None. No seeded draws."""
+        place = getattr(self, "location", None)
+        if not place or not isinstance(place, str):
+            return None
+        mem = self._place_memory()
+        before = self.most_time_place()
+        before_ticks = mem[before]["ticks"] if before else 0
+        rec = mem.get(place) or self._empty_place_record()
+        if getattr(self, "_place_last", None) != place:
+            rec["visits"] += 1
+        if rec["first_tick"] is None:
+            rec["first_tick"] = n
+        rec["ticks"] += 1
+        rec["last_tick"] = n
+        mem[place] = rec
+        self.place_memory = mem
+        self._place_last = place
+        if (before is not None and before != place
+                and rec["ticks"] > before_ticks
+                and rec["ticks"] >= self.PLACE_LEAD_MIN):
+            return {"place": place, "previous": before,
+                    "ticks": rec["ticks"]}
         return None
 
     def climate_commonest(self):
