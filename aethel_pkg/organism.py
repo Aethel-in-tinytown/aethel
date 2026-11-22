@@ -2092,6 +2092,26 @@ class Aethel:
                 f"there, more than anywhere. "
                 f"I had not counted until it was true."
             )
+        # v0.72: a return to a place after a long absence is
+        # noticed in its own words, beside the same save.
+        _return_note = getattr(self, "_place_return_note", None)
+        if _return_note:
+            journal(
+                "place_return",
+                n=n,
+                place=_return_note["place"],
+                gap=_return_note["gap"],
+                returns=_return_note["returns"],
+            )
+            try:
+                _rlabel = self.world.describe(_return_note["place"])
+            except Exception:
+                _rlabel = _return_note["place"]
+            self.say(
+                f"Back at {_rlabel}. I was last here "
+                f"{_return_note['gap']} ticks ago. "
+                f"The place kept its shape without me."
+            )
         self.save()
 
         save_world = getattr(self.world, "save", None)
@@ -5035,10 +5055,16 @@ class Aethel:
     # draws: bookkeeping beside the save, so restart fidelity
     # is untouched.
     PLACE_LEAD_MIN = 200
+    # v0.72: a return is a visit that begins after an absence
+    # of at least this many ticks from a place she has stood
+    # in before (480 ticks is about four hours of her life).
+    PLACE_RETURN_MIN = 480
+
     @staticmethod
     def _empty_place_record():
         return {"visits": 0, "ticks": 0, "first_tick": None,
-                "last_tick": None}
+                "last_tick": None, "returns": 0,
+                "longest_absence": 0}
 
     @classmethod
     def _normalise_place_memory(cls, raw):
@@ -5049,7 +5075,7 @@ class Aethel:
             if not isinstance(rec, dict):
                 continue
             clean = cls._empty_place_record()
-            for k in ("visits", "ticks"):
+            for k in ("visits", "ticks", "returns", "longest_absence"):
                 if isinstance(rec.get(k), (int, float)):
                     clean[k] = int(rec[k])
             for k in ("first_tick", "last_tick"):
@@ -5105,8 +5131,27 @@ class Aethel:
         before = self.most_time_place()
         before_ticks = mem[before]["ticks"] if before else 0
         rec = mem.get(place) or self._empty_place_record()
+        # v0.72: a return is noticed at the one moment it is a
+        # fact — a new visit beginning at a place she has stood
+        # in before, after an absence of PLACE_RETURN_MIN or
+        # more ticks, measured from that place's own last tick
+        # BEFORE this tick rewrites it. The note is stashed on
+        # _place_return_note for tick() to journal and speak;
+        # _record_place keeps returning the v0.71 lead note, so
+        # the two notices never conflate. Short hops away and
+        # first arrivals are not returns. No seeded draws.
+        self._place_return_note = None
         if getattr(self, "_place_last", None) != place:
             rec["visits"] += 1
+            if rec["last_tick"] is not None:
+                gap = n - rec["last_tick"]
+                if gap >= self.PLACE_RETURN_MIN:
+                    rec["returns"] += 1
+                    if gap > rec["longest_absence"]:
+                        rec["longest_absence"] = gap
+                    self._place_return_note = {
+                        "place": place, "gap": gap,
+                        "returns": rec["returns"]}
         if rec["first_tick"] is None:
             rec["first_tick"] = n
         rec["ticks"] += 1

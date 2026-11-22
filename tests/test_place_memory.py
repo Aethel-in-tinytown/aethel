@@ -134,7 +134,8 @@ class TestPlaceMemory(unittest.TestCase):
                       "last_tick": 12},
              "broken": "nope"})
         self.assertEqual(out["home"], {"visits": 2, "ticks": 9,
-                                       "first_tick": 3, "last_tick": 12})
+                                       "first_tick": 3, "last_tick": 12,
+                                       "returns": 0, "longest_absence": 0})
         self.assertNotIn("broken", out)
 
     def test_pre_v071_life_starts_empty_with_no_backfill(self):
