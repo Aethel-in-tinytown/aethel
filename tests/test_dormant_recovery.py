@@ -24,19 +24,11 @@ Sleep was examined and deliberately left alone: sleep is
 duration-bounded and always ends, so it can lower her INTO dormancy
 but cannot hold her there once dormancy itself guarantees recovery.
 
-v0.47 SUPERSESSION: that last call was re-read against the numbers
-and reversed. Erosion beats sleep's flat restore at EVERY strain's
-steady burn, not just at a pinned worst case, so the sleep-drains,
-dormancy-refills sawtooth was live behavior, and sleep now carries
-the same guarantee (tests/test_sleep_recovery.py). The dormant
-guarantee pinned below is unchanged.
-
 Isolation: partial instances (the test_breathing pattern) with
 journal/save/reflect/_update_needs stubbed — the live diary is
 never opened, and no seeded stream is drawn except Briar's cached
 daily jitter, which these tests set explicitly.
 """
-
 import unittest
 
 import aethel_pkg.organism as org
@@ -57,13 +49,8 @@ def make_dormant(pack_id, jitter=None):
     a.save = lambda: None
     a.reflect = lambda: None
     a._update_needs = lambda: None
-    a.vitals = {
-        "satiety": 0.0,
-        "hydration": 0.0,
-        "oxygen": 0.9,
-        "vitality": 0.0,
-        "excitement": 0.0,
-    }
+    a.vitals = {"satiety": 0.0, "hydration": 0.0, "oxygen": 0.9,
+                "vitality": 0.0, "excitement": 0.0}
     a.awareness = 0.0
     a.asleep_for = 0
     a.locked = False
@@ -81,7 +68,6 @@ def make_dormant(pack_id, jitter=None):
         a._jitter_day = a.tick_count // Aethel.DAY_LENGTH
         a._jitter = jitter
     from aethel_pkg.rng import Streams
-
     a.rng_temperament = Streams(42).stream("temperament")
     return a
 
@@ -117,7 +103,8 @@ class TestErosionHelper(DormantCase):
             before = a.vitals["vitality"]
             a._erode()
             spent = before - a.vitals["vitality"]
-            self.assertAlmostEqual(spent, a._vitality_erosion(), places=12, msg=pack_id)
+            self.assertAlmostEqual(spent, a._vitality_erosion(), places=12,
+                                   msg=pack_id)
 
     def test_briar_worst_case_erosion_really_beats_the_old_recovery(self):
         # Sanity on the live diagnosis itself: at the band's top the
@@ -158,18 +145,16 @@ class TestDormantGuarantee(DormantCase):
                 if not a._metabolize(a.tick_count):
                     exited = True
                     break
-                self.assertGreater(
-                    a.vitals["vitality"], start, f"{pack_id}: dormant tick lost ground"
-                )
+                self.assertGreater(a.vitals["vitality"], start,
+                                   f"{pack_id}: dormant tick lost ground")
             self.assertTrue(exited, f"{pack_id}: still dormant after 60 ticks")
 
     def test_briar_at_the_live_days_jitter_climbs_out(self):
         # Her actual day-9 draw was 1.3981120701810654. Pin it.
         a = make_dormant("briar", jitter=1.3981120701810654)
         flags = self.run_metabolism(a, 60)
-        self.assertIn(
-            False, flags, "the live trap: Briar at her day's jitter never exits"
-        )
+        self.assertIn(False, flags,
+                      "the live trap: Briar at her day's jitter never exits")
 
     def test_dormant_tick_nets_at_least_the_floor_under_briar(self):
         a = make_dormant("briar", jitter=WORST_JITTER)
@@ -179,8 +164,8 @@ class TestDormantGuarantee(DormantCase):
         self.assertTrue(a._metabolize(a.tick_count))
         gained = a.vitals["vitality"] - post_erode
         self.assertAlmostEqual(
-            gained, a._vitality_erosion() + Aethel.DORMANT_NET_FLOOR, places=12
-        )
+            gained, a._vitality_erosion() + Aethel.DORMANT_NET_FLOOR,
+            places=12)
 
 
 class TestOldBehaviorPreserved(DormantCase):
