@@ -490,6 +490,10 @@ class Aethel:
         # where people tend to be; nothing until now kept how much
         # company each person has given her. See _record_company.
         self.company_memory = {}
+        # v0.73: the stashed companion-return notice for the
+        # arrival currently being perceived, if any. See
+        # _record_company.
+        self._company_return_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -4968,11 +4972,31 @@ class Aethel:
     # pre-v0.70 life starts empty, the conservative shape of
     # v0.66/v0.68/v0.69). No seeded draws: bookkeeping beside
     # the arrival, so restart fidelity is untouched.
+    #
+    # v0.73 extends the same record with returns: v0.72 taught
+    # her to notice coming back to a PLACE after a long absence,
+    # but a person could be gone from her air for just as long
+    # and return unremarked — the record knew when each person
+    # was last with her and never once looked at the distance.
+    # Each record now also counts returns and the longest
+    # absence per person, folded in at the same arrival, on the
+    # same 480-tick scale as places. Migration is the v0.72
+    # shape: a pre-v0.73 record normalises with returns and
+    # longest_absence at zero and its counted arrivals
+    # preserved, deliberately NOT backfilled (absences she
+    # never counted are not invented).
     COMPANY_LEAD_MIN = 20
+    # v0.73: a companion's return is an arrival that begins
+    # after an absence of at least this many ticks since that
+    # person's own last arrival (480 ticks is about four hours
+    # of her life — the PLACE_RETURN_MIN reckoning, so a person
+    # and a place are missed on the same scale).
+    COMPANY_RETURN_MIN = 480
 
     @staticmethod
     def _empty_company_record():
-        return {"arrivals": 0, "first_tick": None, "last_tick": None}
+        return {"arrivals": 0, "first_tick": None, "last_tick": None,
+                "returns": 0, "longest_absence": 0}
 
     @classmethod
     def _normalise_company_memory(cls, raw):
@@ -4983,8 +5007,9 @@ class Aethel:
             if not isinstance(rec, dict):
                 continue
             clean = cls._empty_company_record()
-            if isinstance(rec.get("arrivals"), (int, float)):
-                clean["arrivals"] = int(rec["arrivals"])
+            for k in ("arrivals", "returns", "longest_absence"):
+                if isinstance(rec.get(k), (int, float)):
+                    clean[k] = int(rec[k])
             for k in ("first_tick", "last_tick"):
                 if isinstance(rec.get(k), (int, float)):
                     clean[k] = int(rec[k])
@@ -5024,6 +5049,29 @@ class Aethel:
         before = self.closest_companion()
         before_count = mem[before]["arrivals"] if before else 0
         rec = mem.get(name) or self._empty_company_record()
+        # v0.73: a companion's return is noticed at the one
+        # moment it is a fact — an arrival by a person who has
+        # stood in her air before, at least COMPANY_RETURN_MIN
+        # ticks after that person's own last arrival, measured
+        # BEFORE this arrival rewrites it. Every call here IS a
+        # fresh arrival (the _perceive branch fires only when
+        # the person was not already in her company), so no
+        # already-present check is needed, the place-memory
+        # shape. The notice is stashed on _company_return_note
+        # for _perceive to journal and speak; _record_company
+        # keeps returning the v0.70 lead note, so the two
+        # notices never conflate. First arrivals and brief
+        # partings are not returns. No seeded draws.
+        self._company_return_note = None
+        if rec["last_tick"] is not None:
+            gap = n - rec["last_tick"]
+            if gap >= self.COMPANY_RETURN_MIN:
+                rec["returns"] += 1
+                if gap > rec["longest_absence"]:
+                    rec["longest_absence"] = gap
+                self._company_return_note = {
+                    "name": name, "gap": gap,
+                    "returns": rec["returns"]}
         if rec["first_tick"] is None:
             rec["first_tick"] = n
         rec["arrivals"] += 1
@@ -5454,6 +5502,24 @@ class Aethel:
                         f"they have come into my air "
                         f"{_comp['arrivals']} times, more than anyone. "
                         f"I had not counted until it was true."
+                    )
+                # v0.73: a companion returning after a long
+                # absence is noticed in its own words, beside
+                # the same arrival.
+                _cret = getattr(self, "_company_return_note", None)
+                if _cret:
+                    journal(
+                        "companion_return",
+                        n=n,
+                        name=name,
+                        gap=_cret["gap"],
+                        returns=_cret["returns"],
+                    )
+                    self.say(
+                        f"{name} is back. I had not had their "
+                        f"company for {_cret['gap']} ticks. "
+                        f"Some absences you only measure when "
+                        f"they end."
                     )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
