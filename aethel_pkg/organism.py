@@ -494,6 +494,13 @@ class Aethel:
         # arrival currently being perceived, if any. See
         # _record_company.
         self._company_return_note = None
+        # v0.74: her shared-place memory — where she has met
+        # each person, counted at each arrival beside the
+        # companionship memory. See _record_company.
+        self.company_place_memory = {}
+        # v0.74: the stashed shared-place notice for the
+        # arrival currently being perceived, if any.
+        self._company_place_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -764,6 +771,10 @@ class Aethel:
                 # v0.70: the companionship memory round-trips — a
                 # restart must not make everyone a stranger again.
                 "company_memory": self._company_memory(),
+                # v0.74: the shared-place memory round-trips —
+                # a restart must not make her forget where she
+                # and each person have met.
+                "company_place_memory": self._company_place_memory(),
                 # v0.71: the place memory and the place she was
                 # last counted in round-trip — a restart must not
                 # invent a fresh visit to the place she stands in.
@@ -959,6 +970,16 @@ class Aethel:
                 # and inventing counts would be confabulation.
                 self.company_memory = self._normalise_company_memory(
                     s.get("company_memory"))
+                # v0.74: a pre-v0.74 life loads with an empty
+                # shared-place memory and starts counting from
+                # the next arrival. Deliberately NOT backfilled
+                # from her impressions or her journal: her
+                # impressions are tendencies, not counted
+                # meetings, and inventing counts would be
+                # confabulation.
+                self.company_place_memory = (
+                    self._normalise_company_place_memory(
+                        s.get("company_place_memory")))
                 # v0.71: a pre-place-memory life loads with an
                 # empty memory and starts counting from the next
                 # tick. Deliberately NOT backfilled from her
@@ -4992,6 +5013,10 @@ class Aethel:
     # of her life — the PLACE_RETURN_MIN reckoning, so a person
     # and a place are missed on the same scale).
     COMPANY_RETURN_MIN = 480
+    # v0.74: a shared place becomes notable when a different
+    # place takes over as a person's usual place with at
+    # least this many meetings there.
+    SHARED_PLACE_LEAD_MIN = 10
 
     @staticmethod
     def _empty_company_record():
@@ -5037,14 +5062,94 @@ class Aethel:
             mem[name]["first_tick"] if mem[name]["first_tick"] is not None
             else 1 << 62, name))
 
-    def _record_company(self, name, n):
+    @staticmethod
+    def _empty_shared_place_record():
+        return {"meetings": 0, "first_tick": None, "last_tick": None}
+
+    @classmethod
+    def _normalise_company_place_memory(cls, raw):
+        mem = {}
+        if not isinstance(raw, dict):
+            return mem
+        for name, places in raw.items():
+            if not isinstance(places, dict):
+                continue
+            clean_places = {}
+            for place, rec in places.items():
+                if not isinstance(rec, dict):
+                    continue
+                clean = cls._empty_shared_place_record()
+                if isinstance(rec.get("meetings"), (int, float)):
+                    clean["meetings"] = int(rec["meetings"])
+                for k in ("first_tick", "last_tick"):
+                    if isinstance(rec.get(k), (int, float)):
+                        clean[k] = int(rec[k])
+                clean_places[str(place)] = clean
+            mem[str(name)] = clean_places
+        return mem
+
+    def _company_place_memory(self):
+        return self._normalise_company_place_memory(
+            getattr(self, "company_place_memory", None))
+
+    def shared_place_record(self, name, place):
+        """Her counted record of meeting `name` at `place`, or None."""
+        person = self._company_place_memory().get(name)
+        if not person:
+            return None
+        return person.get(place)
+
+    def usual_place_for(self, name):
+        """The place she has met `name` most, or None.
+
+        Ties go to the place first met at (the first_tick
+        order, then name), the climate_commonest tie rule."""
+        person = self._company_place_memory().get(name)
+        if not person:
+            return None
+        return min(person, key=lambda place: (
+            -person[place]["meetings"],
+            person[place]["first_tick"]
+            if person[place]["first_tick"] is not None else 1 << 62,
+            place))
+
+    def _record_company(self, name, n, place=None):
         """Fold one arrival into her companionship memory (v0.70).
 
         Called only from _perceive's arrival branch, beside the
         company journal row. Returns a note dict when this arrival
         makes `name` the company she has had most, past the
         COMPANY_LEAD_MIN history, displacing a previous holder —
-        otherwise None. No seeded draws."""
+        otherwise None. No seeded draws.
+
+        v0.74: when `place` is a non-empty string, the arrival
+        also folds into her shared-place memory for (name,
+        place); when it is None, that memory is untouched and
+        behaviour is exactly as before. A stashed note on
+        _company_place_note marks a different place becoming
+        that person's usual place at or past
+        SHARED_PLACE_LEAD_MIN meetings."""
+        self._company_place_note = None
+        if isinstance(place, str) and place:
+            prev_usual = self.usual_place_for(name)
+            sp = self._company_place_memory()
+            person = sp.get(name) or {}
+            sp_rec = person.get(place) or self._empty_shared_place_record()
+            if sp_rec["first_tick"] is None:
+                sp_rec["first_tick"] = n
+            sp_rec["meetings"] += 1
+            sp_rec["last_tick"] = n
+            person[place] = sp_rec
+            sp[name] = person
+            self.company_place_memory = sp
+            new_usual = self.usual_place_for(name)
+            if (prev_usual is not None and prev_usual != place
+                    and new_usual == place
+                    and sp_rec["meetings"] >= self.SHARED_PLACE_LEAD_MIN):
+                self._company_place_note = {
+                    "name": name, "place": place,
+                    "previous": prev_usual,
+                    "meetings": sp_rec["meetings"]}
         mem = self._company_memory()
         before = self.closest_companion()
         before_count = mem[before]["arrivals"] if before else 0
@@ -5487,7 +5592,7 @@ class Aethel:
                 # v0.70: the arrival also lands in her
                 # companionship memory; she speaks only when it
                 # changes whose company she has had most.
-                _comp = self._record_company(name, n)
+                _comp = self._record_company(name, n, place=self.location)
                 if _comp:
                     journal(
                         "companionship",
@@ -5520,6 +5625,26 @@ class Aethel:
                         f"company for {_cret['gap']} ticks. "
                         f"Some absences you only measure when "
                         f"they end."
+                    )
+                # v0.74: a different place becoming this
+                # person's usual place is noticed in its own
+                # words, beside the same arrival.
+                _cplace = getattr(self, "_company_place_note", None)
+                if _cplace:
+                    journal(
+                        "shared_place",
+                        n=n,
+                        name=name,
+                        place=_cplace["place"],
+                        note="usual_changed",
+                        previous=_cplace["previous"],
+                        meetings=_cplace["meetings"],
+                    )
+                    self.say(
+                        f"{name} and I have a place, now: "
+                        f"{self.world.describe(_cplace['place'])}. "
+                        f"We have met there {_cplace['meetings']} "
+                        f"times, more than anywhere else we meet."
                     )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
