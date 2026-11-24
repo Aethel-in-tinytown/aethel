@@ -501,6 +501,9 @@ class Aethel:
         # v0.74: the stashed shared-place notice for the
         # arrival currently being perceived, if any.
         self._company_place_note = None
+        # v0.75: the stashed first-shared-place notice for
+        # the arrival currently being perceived, if any.
+        self._company_first_place_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -5017,6 +5020,12 @@ class Aethel:
     # place takes over as a person's usual place with at
     # least this many meetings there.
     SHARED_PLACE_LEAD_MIN = 10
+    # v0.75: a first shared place with a person becomes
+    # notable when she has already met that person at least
+    # this many times elsewhere — a new place for a stranger
+    # is just a meeting; a new place for someone she knows
+    # is their shared ground growing.
+    SHARED_PLACE_FIRST_MIN = 10
 
     @staticmethod
     def _empty_company_record():
@@ -5113,6 +5122,24 @@ class Aethel:
             if person[place]["first_tick"] is not None else 1 << 62,
             place))
 
+    def shared_places_for(self, name):
+        """The places she has ever met `name`, first-met order.
+
+        v0.75: the breadth of a shared geography, read back
+        from the v0.74 tally — a read, not a second record,
+        so the two can never argue."""
+        person = self._company_place_memory().get(name)
+        if not person:
+            return []
+        return sorted(person, key=lambda place: (
+            person[place]["first_tick"]
+            if person[place]["first_tick"] is not None else 1 << 62,
+            place))
+
+    def shared_place_count(self, name):
+        """How many distinct places she has met `name` at."""
+        return len(self.shared_places_for(name))
+
     def _record_company(self, name, n, place=None):
         """Fold one arrival into her companionship memory (v0.70).
 
@@ -5128,12 +5155,31 @@ class Aethel:
         behaviour is exactly as before. A stashed note on
         _company_place_note marks a different place becoming
         that person's usual place at or past
-        SHARED_PLACE_LEAD_MIN meetings."""
+        SHARED_PLACE_LEAD_MIN meetings.
+
+        v0.75: the same arrival can also be a first — the
+        first time she has ever met this person at this
+        place. That is noticed only past a real history
+        elsewhere (SHARED_PLACE_FIRST_MIN meetings at other
+        places, counted BEFORE this arrival folds in): a
+        first place with a stranger is ordinary, a first
+        place with someone she knows well is their shared
+        ground growing, and she says so. The notice is
+        stashed on _company_first_place_note, separate from
+        the v0.74 usual-place note; a first place can never
+        be a usual-place change (it has one meeting), so the
+        two never fire together. No new state and no seeded
+        draws: the breadth is read from the v0.74 tally."""
         self._company_place_note = None
+        self._company_first_place_note = None
         if isinstance(place, str) and place:
             prev_usual = self.usual_place_for(name)
             sp = self._company_place_memory()
             person = sp.get(name) or {}
+            is_first_shared = place not in person
+            prior_elsewhere = sum(
+                rec["meetings"] for other, rec in person.items()
+                if other != place)
             sp_rec = person.get(place) or self._empty_shared_place_record()
             if sp_rec["first_tick"] is None:
                 sp_rec["first_tick"] = n
@@ -5142,6 +5188,12 @@ class Aethel:
             person[place] = sp_rec
             sp[name] = person
             self.company_place_memory = sp
+            if (is_first_shared
+                    and prior_elsewhere >= self.SHARED_PLACE_FIRST_MIN):
+                self._company_first_place_note = {
+                    "name": name, "place": place,
+                    "prior_meetings": prior_elsewhere,
+                    "shared_places": len(person)}
             new_usual = self.usual_place_for(name)
             if (prev_usual is not None and prev_usual != place
                     and new_usual == place
@@ -5645,6 +5697,27 @@ class Aethel:
                         f"{self.world.describe(_cplace['place'])}. "
                         f"We have met there {_cplace['meetings']} "
                         f"times, more than anywhere else we meet."
+                    )
+                # v0.75: a first shared place with someone she
+                # already knows well is noticed in its own
+                # words, beside the same arrival.
+                _cfirst = getattr(self, "_company_first_place_note", None)
+                if _cfirst:
+                    journal(
+                        "shared_place",
+                        n=n,
+                        name=name,
+                        place=_cfirst["place"],
+                        note="first_shared",
+                        prior_meetings=_cfirst["prior_meetings"],
+                        shared_places=_cfirst["shared_places"],
+                    )
+                    self.say(
+                        f"This is a new place for {name} and me: "
+                        f"{self.world.describe(_cfirst['place'])}. "
+                        f"We have met {_cfirst['prior_meetings']} "
+                        f"times elsewhere, but never here. "
+                        f"Our shared ground grows."
                     )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
