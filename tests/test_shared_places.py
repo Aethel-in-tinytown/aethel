@@ -132,7 +132,8 @@ class TestSharedPlaces(unittest.TestCase):
                       "broken": "nope"},
              "ghost": "nope"})
         self.assertEqual(out["Star"]["tavern"],
-                         {"meetings": 4, "first_tick": 9, "last_tick": 12})
+                         {"meetings": 4, "first_tick": 9, "last_tick": 12,
+                          "returns": 0, "longest_absence": 0})
         self.assertNotIn("broken", out["Star"])
         self.assertNotIn("ghost", out)
 

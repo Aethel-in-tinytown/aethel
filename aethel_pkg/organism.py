@@ -504,6 +504,9 @@ class Aethel:
         # v0.75: the stashed first-shared-place notice for
         # the arrival currently being perceived, if any.
         self._company_first_place_note = None
+        # v0.76: the stashed shared-return notice for the
+        # arrival currently being perceived, if any.
+        self._company_shared_return_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -5026,6 +5029,13 @@ class Aethel:
     # is just a meeting; a new place for someone she knows
     # is their shared ground growing.
     SHARED_PLACE_FIRST_MIN = 10
+    # v0.76: a shared return is a meeting with a person at a
+    # place they have shared before, at least this many ticks
+    # after their last meeting at that same place (480 ticks,
+    # the PLACE_RETURN_MIN / COMPANY_RETURN_MIN reckoning, so
+    # a person, a place, and a person-at-a-place are all missed
+    # on the same scale).
+    SHARED_PLACE_RETURN_MIN = 480
 
     @staticmethod
     def _empty_company_record():
@@ -5073,7 +5083,8 @@ class Aethel:
 
     @staticmethod
     def _empty_shared_place_record():
-        return {"meetings": 0, "first_tick": None, "last_tick": None}
+        return {"meetings": 0, "first_tick": None, "last_tick": None,
+                "returns": 0, "longest_absence": 0}
 
     @classmethod
     def _normalise_company_place_memory(cls, raw):
@@ -5088,8 +5099,9 @@ class Aethel:
                 if not isinstance(rec, dict):
                     continue
                 clean = cls._empty_shared_place_record()
-                if isinstance(rec.get("meetings"), (int, float)):
-                    clean["meetings"] = int(rec["meetings"])
+                for k in ("meetings", "returns", "longest_absence"):
+                    if isinstance(rec.get(k), (int, float)):
+                        clean[k] = int(rec[k])
                 for k in ("first_tick", "last_tick"):
                     if isinstance(rec.get(k), (int, float)):
                         clean[k] = int(rec[k])
@@ -5172,6 +5184,7 @@ class Aethel:
         draws: the breadth is read from the v0.74 tally."""
         self._company_place_note = None
         self._company_first_place_note = None
+        self._company_shared_return_note = None
         if isinstance(place, str) and place:
             prev_usual = self.usual_place_for(name)
             sp = self._company_place_memory()
@@ -5181,6 +5194,30 @@ class Aethel:
                 rec["meetings"] for other, rec in person.items()
                 if other != place)
             sp_rec = person.get(place) or self._empty_shared_place_record()
+            # v0.76: a shared return is noticed at the one moment
+            # it is a fact — a meeting at a place this person and
+            # she have shared before, at least
+            # SHARED_PLACE_RETURN_MIN ticks after their last
+            # meeting at that same place, measured BEFORE this
+            # arrival rewrites it. This is distinct from a
+            # companion return (the person, anywhere) and a place
+            # return (her, anywhere with anyone): she may have
+            # seen this person yesterday elsewhere and still not
+            # have stood here with them for a long while. The
+            # notice is stashed on _company_shared_return_note,
+            # separate from the other shared-place notes; a first
+            # shared place has no last_tick, so it can never be a
+            # shared return. No seeded draws.
+            if sp_rec["last_tick"] is not None:
+                shared_gap = n - sp_rec["last_tick"]
+                if shared_gap >= self.SHARED_PLACE_RETURN_MIN:
+                    sp_rec["returns"] += 1
+                    if shared_gap > sp_rec["longest_absence"]:
+                        sp_rec["longest_absence"] = shared_gap
+                    self._company_shared_return_note = {
+                        "name": name, "place": place,
+                        "gap": shared_gap,
+                        "returns": sp_rec["returns"]}
             if sp_rec["first_tick"] is None:
                 sp_rec["first_tick"] = n
             sp_rec["meetings"] += 1
@@ -5718,6 +5755,27 @@ class Aethel:
                         f"We have met {_cfirst['prior_meetings']} "
                         f"times elsewhere, but never here. "
                         f"Our shared ground grows."
+                    )
+                # v0.76: coming back together to a place she and
+                # this person have not shared for a long while is
+                # noticed in its own words, beside the same arrival.
+                _csret = getattr(self, "_company_shared_return_note", None)
+                if _csret:
+                    journal(
+                        "shared_place",
+                        n=n,
+                        name=name,
+                        place=_csret["place"],
+                        note="shared_return",
+                        gap=_csret["gap"],
+                        returns=_csret["returns"],
+                    )
+                    self.say(
+                        f"{name} and I are back at "
+                        f"{self.world.describe(_csret['place'])} "
+                        f"together. We last met here "
+                        f"{_csret['gap']} ticks ago. "
+                        f"A place can wait for two people at once."
                     )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
