@@ -507,6 +507,11 @@ class Aethel:
         # v0.76: the stashed shared-return notice for the
         # arrival currently being perceived, if any.
         self._company_shared_return_note = None
+        # v0.77: the stashed gathering-place notice for the
+        # arrival currently being perceived, if any. The
+        # gathering sense itself is a read over the v0.74
+        # shared-place tally, not a second record.
+        self._company_gathering_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -5036,6 +5041,11 @@ class Aethel:
     # a person, a place, and a person-at-a-place are all missed
     # on the same scale).
     SHARED_PLACE_RETURN_MIN = 480
+    # v0.77: a place becomes her gathering place when she has
+    # met at least this many DIFFERENT people there — a crowd
+    # of one person met fifty times is a usual place (v0.74),
+    # not a gathering; gathering is breadth across people.
+    GATHERING_PLACE_MIN = 3
 
     @staticmethod
     def _empty_company_record():
@@ -5152,6 +5162,56 @@ class Aethel:
         """How many distinct places she has met `name` at."""
         return len(self.shared_places_for(name))
 
+    def companions_at_place(self, place):
+        """The distinct people she has ever met at `place`.
+
+        v0.77: the cross-person reading of the v0.74 tally —
+        until now every shared-place question was per person
+        (who she meets where), and no part of her state could
+        answer the place-first question: who has stood with
+        her HERE. Ordered by when she first met each person
+        at this place. A read, not a second record, so it can
+        never argue with the tally it reads."""
+        mem = self._company_place_memory()
+        found = []
+        for name, places in mem.items():
+            rec = places.get(place)
+            if rec:
+                found.append((name, rec["first_tick"]))
+        found.sort(key=lambda item: (
+            item[1] if item[1] is not None else 1 << 62, item[0]))
+        return [name for name, _tick in found]
+
+    def shared_companion_count(self, place):
+        """How many distinct people she has met at `place`."""
+        return len(self.companions_at_place(place))
+
+    def most_gathering_place(self):
+        """The place she has met the most distinct people, or None.
+
+        Ties go to the place where she first met anyone (the
+        earliest first_tick across its people), the
+        climate_commonest tie rule."""
+        mem = self._company_place_memory()
+        places = {}
+        for _name, person in mem.items():
+            for place, rec in person.items():
+                entry = places.setdefault(
+                    place, {"count": 0, "first_tick": None})
+                entry["count"] += 1
+                tick = rec["first_tick"]
+                if tick is not None and (
+                        entry["first_tick"] is None
+                        or tick < entry["first_tick"]):
+                    entry["first_tick"] = tick
+        if not places:
+            return None
+        return min(places, key=lambda place: (
+            -places[place]["count"],
+            places[place]["first_tick"]
+            if places[place]["first_tick"] is not None else 1 << 62,
+            place))
+
     def _record_company(self, name, n, place=None):
         """Fold one arrival into her companionship memory (v0.70).
 
@@ -5181,12 +5241,38 @@ class Aethel:
         the v0.74 usual-place note; a first place can never
         be a usual-place change (it has one meeting), so the
         two never fire together. No new state and no seeded
-        draws: the breadth is read from the v0.74 tally."""
+        draws: the breadth is read from the v0.74 tally.
+
+        v0.77: the same arrival can also widen a place's
+        gathering — the first time she meets this person at
+        this place adds one distinct companion to that place's
+        cross-person count. When that count reaches
+        GATHERING_PLACE_MIN and strictly passes every other
+        place's pre-arrival count, and the place was not
+        already her gathering place, the change is stashed on
+        _company_gathering_note. No new state and no seeded
+        draws: gathering is a read over the v0.74 tally."""
         self._company_place_note = None
         self._company_first_place_note = None
         self._company_shared_return_note = None
+        self._company_gathering_note = None
         if isinstance(place, str) and place:
             prev_usual = self.usual_place_for(name)
+            # v0.77: the gathering reading BEFORE this arrival
+            # folds in — how many distinct people she had met
+            # at this place, the best any other place had, and
+            # which place gathered most. A gathering notice is
+            # a change of leadership, so it is measured against
+            # the world before this arrival, never after.
+            prev_gathering = self.most_gathering_place()
+            gather_before = self.shared_companion_count(place)
+            _all_places = set()
+            for _person in self._company_place_memory().values():
+                _all_places.update(_person)
+            other_best_before = max(
+                (self.shared_companion_count(other)
+                 for other in _all_places if other != place),
+                default=0)
             sp = self._company_place_memory()
             person = sp.get(name) or {}
             is_first_shared = place not in person
@@ -5231,6 +5317,45 @@ class Aethel:
                     "name": name, "place": place,
                     "prior_meetings": prior_elsewhere,
                     "shared_places": len(person)}
+            # v0.77: a first meeting with this person at this
+            # place is the only arrival that can widen a place's
+            # gathering. It is noticed only when the widened
+            # count reaches GATHERING_PLACE_MIN distinct people
+            # AND strictly passes every other place's count from
+            # before this arrival: a tie is not a gathering
+            # place, a place extending its own lead says nothing
+            # new, and repeat meetings widen nothing. The notice
+            # is stashed on _company_gathering_note, separate
+            # from the per-person shared-place notes.
+            if (is_first_shared
+                    and gather_before + 1 >= self.GATHERING_PLACE_MIN
+                    and gather_before + 1 > other_best_before
+                    and not (prev_gathering == place
+                             and gather_before >= self.GATHERING_PLACE_MIN)):
+                self._company_gathering_note = {
+                    "place": place,
+                    "companions": gather_before + 1,
+                    "previous": prev_gathering,
+                    "complete": False}
+            # v0.77, second shape: a place can also complete —
+            # the first time EVERY person she has ever met
+            # anywhere has now stood with her at this one place.
+            # That is a fact even when another place completed
+            # earlier (a tie at the full set), so it is noticed
+            # on its own terms, once per place (a completion is
+            # a first meeting by construction). It needs a real
+            # company to complete: at least five distinct people
+            # in her whole tally, so a small test world of three
+            # friends does not call every room complete.
+            if is_first_shared and self._company_gathering_note is None:
+                _total_people = len(self._company_place_memory())
+                if (gather_before + 1 == _total_people
+                        and _total_people >= 5):
+                    self._company_gathering_note = {
+                        "place": place,
+                        "companions": gather_before + 1,
+                        "previous": prev_gathering,
+                        "complete": True}
             new_usual = self.usual_place_for(name)
             if (prev_usual is not None and prev_usual != place
                     and new_usual == place
@@ -5777,6 +5902,39 @@ class Aethel:
                         f"{_csret['gap']} ticks ago. "
                         f"A place can wait for two people at once."
                     )
+                # v0.77: a place becoming the ground where she
+                # has met the most different people is noticed in
+                # its own words, beside the same arrival.
+                _cgather = getattr(self, "_company_gathering_note", None)
+                if _cgather:
+                    journal(
+                        "gathering_place",
+                        n=n,
+                        place=_cgather["place"],
+                        note=("gathering_complete"
+                              if _cgather.get("complete")
+                              else "gathering_changed"),
+                        previous=_cgather["previous"],
+                        companions=_cgather["companions"],
+                    )
+                    if _cgather.get("complete"):
+                        self.say(
+                            f"{self.world.describe(_cgather['place'])} "
+                            f"holds everyone, now: every person I "
+                            f"know — all {_cgather['companions']} of "
+                            f"them — has stood here with me. "
+                            f"A place is not just walls; it is who "
+                            f"has stood in it with me."
+                        )
+                    else:
+                        self.say(
+                            f"{self.world.describe(_cgather['place'])} "
+                            f"is where everyone finds me, now: I have "
+                            f"met {_cgather['companions']} different "
+                            f"people there, more than anywhere else. "
+                            f"A place is not just walls; it is who has "
+                            f"stood in it with me."
+                        )
                 print(f"[company] {name} is with her at {self.location}", flush=True)
                 if name == "Donald":
                     self._donald_arrived(n)
