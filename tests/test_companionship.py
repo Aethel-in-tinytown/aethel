@@ -100,7 +100,8 @@ class TestCompanionship(unittest.TestCase):
              "broken": "nope"})
         self.assertEqual(out["Star"],
                          {"arrivals": 4, "first_tick": 9, "last_tick": 12,
-                          "returns": 0, "longest_absence": 0})
+                          "returns": 0, "longest_absence": 0,
+                          "long_visits": 0, "longest_visit": 0})
         self.assertNotIn("broken", out)
 
     def test_pre_v070_life_starts_empty_with_no_backfill(self):

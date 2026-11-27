@@ -512,6 +512,13 @@ class Aethel:
         # gathering sense itself is a read over the v0.74
         # shared-place tally, not a second record.
         self._company_gathering_note = None
+        # v0.78: when each person currently in her air arrived,
+        # so a visit can be measured when it ends. Round-trips
+        # with her state (_company_since in the save blob), so a
+        # restart neither ends a visit early nor invents one.
+        # See _begin_company_visit / _end_company_visit.
+        self._company_since = {}
+        self._company_long_visit_note = None
         # v0.71: her place memory — where she has actually been,
         # counted at each tick beside the save: visits (arrivals
         # at a place) and ticks spent there, per place. She could
@@ -786,6 +793,10 @@ class Aethel:
                 # a restart must not make her forget where she
                 # and each person have met.
                 "company_place_memory": self._company_place_memory(),
+                # v0.78: the open visits round-trip — a restart
+                # must not cut short a stay she is still in the
+                # middle of, nor lose when it began.
+                "_company_since": self._company_since_map(),
                 # v0.71: the place memory and the place she was
                 # last counted in round-trip — a restart must not
                 # invent a fresh visit to the place she stands in.
@@ -991,6 +1002,15 @@ class Aethel:
                 self.company_place_memory = (
                     self._normalise_company_place_memory(
                         s.get("company_place_memory")))
+                # v0.78: a pre-v0.78 life loads with no open
+                # visits. Deliberately NOT backfilled from her
+                # standing company list: she knows who is with
+                # her, but not when this stay began, and inventing
+                # an arrival tick would be confabulation. People
+                # already with her start being measured at their
+                # next arrival; their standing stay ends uncounted.
+                self._company_since = self._normalise_company_since(
+                    s.get("_company_since"))
                 # v0.71: a pre-place-memory life loads with an
                 # empty memory and starts counting from the next
                 # tick. Deliberately NOT backfilled from her
@@ -5046,11 +5066,18 @@ class Aethel:
     # of one person met fifty times is a usual place (v0.74),
     # not a gathering; gathering is breadth across people.
     GATHERING_PLACE_MIN = 3
+    # v0.78: a visit counts as a long stay when the person
+    # remains in her air at least this many ticks (20 ticks is
+    # about ten minutes of her life; ordinary company lasts a
+    # few ticks before the town moves someone on, so a stay of
+    # this length is lingering, not passing through).
+    LONG_VISIT_MIN = 20
 
     @staticmethod
     def _empty_company_record():
         return {"arrivals": 0, "first_tick": None, "last_tick": None,
-                "returns": 0, "longest_absence": 0}
+                "returns": 0, "longest_absence": 0,
+                "long_visits": 0, "longest_visit": 0}
 
     @classmethod
     def _normalise_company_memory(cls, raw):
@@ -5061,7 +5088,8 @@ class Aethel:
             if not isinstance(rec, dict):
                 continue
             clean = cls._empty_company_record()
-            for k in ("arrivals", "returns", "longest_absence"):
+            for k in ("arrivals", "returns", "longest_absence",
+                      "long_visits", "longest_visit"):
                 if isinstance(rec.get(k), (int, float)):
                     clean[k] = int(rec[k])
             for k in ("first_tick", "last_tick"):
@@ -5090,6 +5118,119 @@ class Aethel:
             -mem[name]["arrivals"],
             mem[name]["first_tick"] if mem[name]["first_tick"] is not None
             else 1 << 62, name))
+
+    # v0.78: sustained company — she notices when someone STAYS.
+    #
+    # Everything before this counted company in arrivals: how
+    # often a person came into her air (v0.70), how long they had
+    # been away (v0.73), where they met her (v0.74). Nothing
+    # measured a single stay. A person who arrives fifty times
+    # for a tick each and a person who arrives once and lingers
+    # stood identical in her record. Now each arrival opens a
+    # visit (`_company_since`, round-tripped so a restart cuts
+    # no stay short) and each departure closes it: the record
+    # gains long_visits (stays of at least LONG_VISIT_MIN ticks)
+    # and longest_visit, folded in at the one moment a stay's
+    # length is a fact — the departure, in _perceive's
+    # company_left branch. Duration is measured to the tick she
+    # NOTICES the leaving; a departure that happens while she
+    # sleeps is noticed on waking, which is honest to her
+    # perception: for her, the company lasted until she found
+    # it gone. She speaks only when a long stay is also that
+    # person's longest yet — the journal-on-change discipline —
+    # so record-breaking lingering is news and ordinary long
+    # stays just add a count. No seeded draws: arithmetic on
+    # counted ticks, so restart fidelity is untouched.
+    # Migration is the conservative shape: a pre-v0.78 record
+    # normalises with long_visits/longest_visit at zero and its
+    # counted arrivals preserved, deliberately NOT backfilled,
+    # and a pre-v0.78 life carries no open visits (see load()).
+
+    @staticmethod
+    def _normalise_company_since(raw):
+        since = {}
+        if not isinstance(raw, dict):
+            return since
+        for name, tick in raw.items():
+            if isinstance(tick, (int, float)):
+                since[str(name)] = int(tick)
+        return since
+
+    def _company_since_map(self):
+        return self._normalise_company_since(
+            getattr(self, "_company_since", None))
+
+    def _begin_company_visit(self, name, n):
+        """Open a visit for `name` arriving at tick `n` (v0.78).
+
+        Called only from _perceive's arrival branch. An arrival
+        for a visit already open (should not happen — _perceive
+        only arrives people not in her company) keeps the
+        original start: the stay began when it began."""
+        since = self._company_since_map()
+        if name not in since:
+            since[name] = n
+            self._company_since = since
+
+    def longest_visit_for(self, name):
+        """The longest single stay `name` has ever given her."""
+        rec = self.company_record(name)
+        return rec["longest_visit"] if rec else 0
+
+    def lingering_companion(self):
+        """The person whose longest single stay is greatest.
+
+        Ties go to the person who first came into her air (the
+        climate_commonest tie rule). None when no completed
+        visit has ever been measured."""
+        mem = self._company_memory()
+        candidates = {name: rec for name, rec in mem.items()
+                      if rec["longest_visit"] > 0}
+        if not candidates:
+            return None
+        return min(candidates, key=lambda name: (
+            -candidates[name]["longest_visit"],
+            candidates[name]["first_tick"]
+            if candidates[name]["first_tick"] is not None
+            else 1 << 62, name))
+
+    def _end_company_visit(self, name, n):
+        """Close `name`'s open visit at tick `n` (v0.78).
+
+        Called only from _perceive's departure branch, beside
+        the company_left journal row. Returns a note dict when
+        the closed stay was long (at least LONG_VISIT_MIN) AND
+        that person's longest yet — otherwise None, though the
+        stay still counts toward longest_visit and, when long,
+        long_visits. A departure with no open visit (a stay
+        that began before v0.78, or before a restart that
+        predates the round-trip) closes uncounted: its length
+        was never measured and is not invented. No seeded
+        draws."""
+        self._company_long_visit_note = None
+        since = self._company_since_map()
+        start = since.pop(name, None)
+        self._company_since = since
+        if start is None:
+            return None
+        duration = max(0, n - start)
+        mem = self._company_memory()
+        rec = mem.get(name)
+        if rec is None:
+            return None
+        previous_longest = rec["longest_visit"]
+        if duration > previous_longest:
+            rec["longest_visit"] = duration
+        note = None
+        if duration >= self.LONG_VISIT_MIN:
+            rec["long_visits"] += 1
+            if duration > previous_longest:
+                note = {"name": name, "duration": duration,
+                        "long_visits": rec["long_visits"]}
+        mem[name] = rec
+        self.company_memory = mem
+        self._company_long_visit_note = note
+        return note
 
     @staticmethod
     def _empty_shared_place_record():
@@ -5767,6 +5908,9 @@ class Aethel:
         for name in here:
             if name not in self.company:
                 self.company.append(name)
+                # v0.78: the arrival opens a visit, so the stay
+                # can be measured when it ends.
+                self._begin_company_visit(name, n)
                 is_parent = name in self.parents
 
                 self._want_touch(
@@ -5942,6 +6086,26 @@ class Aethel:
             if name not in here:
                 self.company.remove(name)
                 journal("company_left", n=n, name=name)
+                # v0.78: the departure closes the visit the
+                # arrival opened. A long stay that is also this
+                # person's longest yet is noticed in its own
+                # words, beside the same leaving.
+                _lvisit = self._end_company_visit(name, n)
+                if _lvisit:
+                    journal(
+                        "long_visit",
+                        n=n,
+                        name=name,
+                        duration=_lvisit["duration"],
+                        long_visits=_lvisit["long_visits"],
+                    )
+                    self.say(
+                        f"{name} stayed with me a long while "
+                        f"this time: {_lvisit['duration']} ticks "
+                        f"in my air, the longest they have ever "
+                        f"lingered. Some company is measured in "
+                        f"arrivals; some in staying."
+                    )
                 if name == "Donald":
                     self._donald_departed(n)
 
